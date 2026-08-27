@@ -29,8 +29,11 @@ export default function Dashboard() {
     setLoading(false);
   };
 
-  useEffect(() => { load(date, urlSnapshot); setSnapshot(urlSnapshot); // eslint-disable-line
-  }, []);
+  useEffect(() => {
+    setSnapshot(urlSnapshot);
+    load(urlDate ?? date, urlSnapshot);
+    // eslint-disable-line react-hooks/exhaustive-deps
+  }, [urlDate, urlSnapshot]);
 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto">
