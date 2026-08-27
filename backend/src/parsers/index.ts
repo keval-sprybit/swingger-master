@@ -24,6 +24,9 @@ export interface ParseOutcome {
   detectedDate: Date | null;
   filenameDate: Date | null;
   dateSource: "content" | "filename" | "none";
+  // For LARGE_DEALS: present when row-level DATE values differ from the
+  // report/trading date, so callers can warn about the distinction.
+  dealDatesDetected: boolean;
   rows: NormalizedRow[];
   validRows: number;
   invalidRows: number;
@@ -47,6 +50,7 @@ export function detectAndParse(buffer: Buffer, originalFilename: string): ParseO
       detectedDate: null,
       filenameDate: null,
       dateSource: "none",
+      dealDatesDetected: false,
       rows: [],
       validRows: 0,
       invalidRows: 0,
@@ -56,7 +60,7 @@ export function detectAndParse(buffer: Buffer, originalFilename: string): ParseO
   }
 
   const detection = detectReportType(headers, originalFilename);
-  const dateDetection = detectTradingDate(headers, rows, originalFilename);
+  const dateDetection = detectTradingDate(headers, rows, originalFilename, detection.reportType);
 
   const schema = REPORT_SCHEMAS.find((s) => s.type === detection.reportType);
   const normalized: NormalizedRow[] = [];
@@ -116,6 +120,9 @@ export function detectAndParse(buffer: Buffer, originalFilename: string): ParseO
     detectedDate: dateDetection.detectedDate,
     filenameDate: dateDetection.filenameDate,
     dateSource: dateDetection.source,
+    dealDatesDetected:
+      detection.reportType === "LARGE_DEALS" &&
+      normalized.some((r) => r.tradeDate !== undefined && dateDetection.detectedDate !== null && r.tradeDate!.getTime() !== dateDetection.detectedDate.getTime()),
     rows: normalized,
     validRows,
     invalidRows,

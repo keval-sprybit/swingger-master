@@ -83,7 +83,6 @@ Open **http://localhost:5173** in your browser.
 - **Historical Charts** — Price/volume charts with moving averages and trend detection for any stock over the past year.
 
 ## Supported NSE Reports
-
 | Report Type | Filename Keywords | Header Indicators |
 |---|---|---|
 | Most Active Volume | `volume`, `MA` | `SYMBOL, VOLUME (Shares), VALUE` |
@@ -120,6 +119,35 @@ Open **http://localhost:5173** in your browser.
 
 All configurable from the Settings page.
 
+## Bulk Deals: Report Date vs Deal Date
+
+Bulk/Large Deals CSVs carry a row-level `DATE` column that is the **deal/transaction date** — it is **not** the report's trading date. The report trading date is taken from the forced date, or the filename date, or report-level metadata. Row-level deal dates are preserved separately in `large_deals.trade_date`.
+
+For example, `Large-deals-BULK-27-Aug-2026.csv` with rows dated `26-Aug` is stored with:
+- `csv_uploads.trading_date = 2026-08-27` (report date → stored under `uploads/2026/08/27/`)
+- `large_deals.trade_date  = 2026-08-26` (deal date, preserved)
+
+The Upload page reports "Report Trading Date" and warns when row-level deal dates differ.
+
+### Data Correction Script
+
+If a Bulk Deals upload was previously mis-assigned to the wrong trading day (e.g. using its row-level deal date as the report date), run:
+
+```bash
+cd backend
+npm run fix:bulk-deals-date -- "<originalFilename>" <correctDate> [<wrongDate>]
+# e.g.
+npm run fix:bulk-deals-date -- "Large-deals-BULK-27-Aug-2026.csv" 2026-08-27 2026-08-26
+```
+
+This:
+1. Reassigns the upload's `tradingDate` to the correct report date
+2. Moves its `LargeDeal` rows to the correct report date **without** changing their `trade_date`
+3. Moves the physical CSV file to the correct `uploads/YYYY/MM/DD/` folder
+4. Rebuilds daily metrics for both the old and new trading days
+
+It is idempotent and never deletes rows.
+
 ## Disclaimer
 
 This application is for **educational and research purposes only**. It does not provide financial advice. Trading in equities involves risk. Always consult a SEBI-registered financial advisor before making investment decisions.
@@ -130,6 +158,7 @@ This application is for **educational and research purposes only**. It does not 
 swinnger-machine/
 ├── backend/
 │   ├── prisma/schema.prisma          # Database schema (18+ models)
+│   ├── scripts/fixBulkDealsDate.ts   # Data correction for mis-dated Bulk Deals
 │   ├── src/
 │   │   ├── parsers/                  # CSV detection, normalization, column maps
 │   │   ├── analysis/                 # Signal engine, scoring, trade setup, types

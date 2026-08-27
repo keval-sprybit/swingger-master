@@ -115,7 +115,7 @@ Same CSV structure as Most Active Volume/Value. Disambiguated by filename keywor
 
 | Column | Parsed Field | Type |
 |---|---|---|
-| DATE | tradeDate | date |
+| DATE | tradeDate | date (row-level deal date; NOT the report trading date) |
 | SYMBOL | symbol | string |
 | SECURITY NAME | securityName | string |
 | CLIENT NAME | clientName | string |
@@ -124,13 +124,38 @@ Same CSV structure as Most Active Volume/Value. Disambiguated by filename keywor
 | TRADE PRICE / WEIGHTED AVG. PRICE | tradePrice | decimal |
 | REMARKS | remarks | string |
 
-## Date Detection
+## Date Detection — Report Date vs Row-Level Deal Date
 
-Trading dates are extracted from:
+The system distinguishes two dates:
 
-1. **CSV `DATE` column** — for Large Deals
-2. **Filename** — patterns like `DD-Mon-YYYY`, `DD/MM/YYYY`, `YYYY-MM-DD`
-3. **None** — needs manual override
+1. **Report / trading date** (`tradingDate` on `csv_uploads`) — which trading day the report belongs to. This determines the `uploads/YYYY/MM/DD/` folder.
+2. **Row-level deal date** (`trade_date` on `large_deals`) — for Bulk/Large Deals, the DATE column inside individual rows is the *transaction/deal date*.
+
+### Report date resolution order
+
+1. **Explicit user-forced date** (Upload page → "Force Date"), if provided → overrides everything for the report's trading date.
+2. **Reliable report filename date** (e.g. `Large-deals-BULK-27-Aug-2026.csv` → `27-Aug-2026`).
+3. **Report-level date/header metadata** (a genuine report-level DATE column) — only for non-deal report types.
+4. **Row-level dates as a last fallback** — never used to pick the report date for Bulk Deals.
+
+### Important: Bulk Deals
+
+For `LARGE_DEALS`, the CSV `DATE` column is the **deal date**, NOT the report date. It must never automatically determine the report's trading date.
+
+Example — file `Large-deals-BULK-27-Aug-2026.csv` whose rows carry `DATE = 26-Aug-2026`:
+
+| Field | Value |
+|---|---|
+| report/trading date (`csv_uploads.trading_date`) | `2026-08-27` |
+| filename date (`csv_uploads.filename_date`) | `2026-08-27` |
+| detected date (`csv_uploads.detected_date`) | `2026-08-27` |
+| row-level deal date (`large_deals.trade_date`) | `2026-08-26` |
+
+Both values are preserved independently. The physical file is stored under `uploads/2026/08/27/` even though the deal rows are dated `26-Aug`.
+
+### Other report types
+
+Files like MA volume/value, gainers, losers, and 52-week reports do not contain a row-level deal DATE column, so the filename date (or a forced date) is used directly.
 
 ## Unknown Reports
 

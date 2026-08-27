@@ -291,22 +291,50 @@ export function detectReportType(headers: string[], filename: string): Detection
   };
 }
 
-// Detect the trading/report date. Prefer an explicit date inside the file
-// (e.g. Large Deals DATE column) when available; otherwise fall back to filename.
+export interface TradingDateInfo {
+  detectedDate: Date | null;
+  filenameDate: Date | null;
+  source: "content" | "filename" | "none";
+}
+
+// Detect the report/trading date.
+//
+// IMPORTANT (Bulk Deals): For report types whose DATE column is a *row-level*
+// transaction/deal date (LARGE_DEALS), that column must NOT determine the
+// report's trading_date. The report date comes from the explicit/forced date,
+// the filename date, or report-level header metadata. Row-level deal dates are
+// captured separately in each row's `tradeDate` field and never used to pick
+// the report/trading date.
+//
+// The report date resolution order is:
+//   1. Explicit user-forced date (handled in uploadService)
+//   2. Reliable report filename date
+//   3. Report-level DATE column, but ONLY for non-deal report types (i.e. when
+//      the DATE column represents the report date itself)
 export function detectTradingDate(
   headers: string[],
   rows: Record<string, string>[],
-  filename: string
-): { detectedDate: Date | null; filenameDate: Date | null; source: "content" | "filename" | "none" } {
+  filename: string,
+  reportType: string
+): TradingDateInfo {
   const normHeaders = headers.map(normalizeHeader);
   const filenameDate = detectDateFromFilename(filename);
 
-  // Look for a DATE column in the first data rows
+  // For LARGE_DEALS the DATE column is a per-row deal date — it must not become
+  // the report/trading date. Prefer the filename date.
+  if (reportType === "LARGE_DEALS") {
+    return {
+      detectedDate: filenameDate,
+      filenameDate,
+      source: filenameDate ? "filename" : "none",
+    };
+  }
+
+  // Non-deal reports: look for a genuine report-level DATE column.
   const dateColIdx = normHeaders.findIndex((h) => h === "date");
   if (dateColIdx >= 0) {
     for (const row of rows.slice(0, 5)) {
-      const headersArr = headers;
-      const raw = row[headersArr[dateColIdx]];
+      const raw = row[headers[dateColIdx]];
       const dt = parseDate(raw);
       if (dt) return { detectedDate: dt, filenameDate, source: "content" };
     }

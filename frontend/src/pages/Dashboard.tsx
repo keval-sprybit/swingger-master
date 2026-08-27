@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
 import { todayISO, fmt, fmtPct, fmtCurrency, fmtVol } from "../utils";
 import ScoreBadge from "../components/ScoreBadge";
@@ -7,16 +7,20 @@ import StatusBadge from "../components/StatusBadge";
 import { BarChart3, ArrowUpRight, Clock, AlertTriangle, FileCheck, List, Eye } from "lucide-react";
 
 export default function Dashboard() {
-  const [date, setDate] = useState(todayISO());
+  const [searchParams] = useSearchParams();
+  const urlDate = searchParams.get("date") ?? undefined;
+  const urlSnapshot = searchParams.get("snapshot") ? Number(searchParams.get("snapshot")) : undefined;
+  const [date, setDate] = useState(urlDate ?? todayISO());
+  const [snapshot, setSnapshot] = useState<number | undefined>(urlSnapshot);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const load = async (d: string) => {
+  const load = async (d: string, snap?: number) => {
     setLoading(true);
     setError("");
     try {
-      const res = await api.dashboard(d);
+      const res = await api.dashboard(d, snap);
       setData(res);
       if (res.tradingDate) setDate(res.tradingDate);
     } catch (e: any) {
@@ -25,7 +29,8 @@ export default function Dashboard() {
     setLoading(false);
   };
 
-  useEffect(() => { load(date); }, []);
+  useEffect(() => { load(date, urlSnapshot); setSnapshot(urlSnapshot); // eslint-disable-line
+  }, []);
 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto">
@@ -39,9 +44,17 @@ export default function Dashboard() {
           <p className="text-gray-500 text-sm mt-1">Analytical decision-support tool. Market returns not guaranteed.</p>
         </div>
         <div className="flex items-center gap-3">
-          <input type="date" value={date} onChange={(e) => { setDate(e.target.value); load(e.target.value); }} className="input" />
+          <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setSnapshot(undefined); load(e.target.value); }} className="input" />
         </div>
       </div>
+
+      {snapshot !== undefined && (
+        <div className="card bg-amber-900/10 border-amber-700/30 text-amber-300 text-sm flex items-center gap-2">
+          <Clock size={15} />
+          Viewing snapshot v{snapshot}.{" "}
+          <Link to={date ? `/?date=${date}` : "/"} className="underline hover:text-amber-200">Show latest snapshot</Link>
+        </div>
+      )}
 
       {error && <div className="card bg-red-900/20 border-red-700/30 text-red-400 text-sm flex items-center gap-2"><AlertTriangle size={16}/> {error}</div>}
 

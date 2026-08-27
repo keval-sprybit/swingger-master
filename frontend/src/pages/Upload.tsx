@@ -140,12 +140,22 @@ export default function Upload() {
                   </div>
                   <div className="mt-1.5 space-y-0.5 text-xs text-gray-400">
                     <p>Status: <span className="font-medium text-gray-200">{r.status}</span></p>
-                    {r.reportType && <p>Type: {r.reportType.replace(/_/g, " ")}</p>}
-                    {r.tradingDate && <p>Date: {r.tradingDate}</p>}
+                    {r.reportType && <p>Report: {r.reportType.replace(/_/g, " ")}</p>}
+                    {r.tradingDate && <p>Report Trading Date: <span className="font-medium text-gray-200">{r.tradingDate}</span></p>}
+                    {r.filenameDate && r.tradingDate && r.filenameDate !== r.tradingDate && (
+                      <p>Filename Date: {r.filenameDate}</p>
+                    )}
+                    {r.dealDatesDetected && <p>Rows' Deal Date: may differ from the report trading date (preserved separately).</p>}
                     {r.validRows !== undefined && <p>Rows: {r.validRows} valid{r.invalidRows ? `, ${r.invalidRows} invalid` : ""}</p>}
                     {r.candidates && r.candidates.length > 0 && <p>Possible types: {r.candidates.join(", ")}</p>}
                     {r.storedFilename && <p>Stored: {r.storedFilename}</p>}
                   </div>
+                  {r.tradeDateWarning && (
+                    <div className="mt-2 p-2 rounded bg-amber-900/20 text-amber-400 text-xs flex items-start gap-2">
+                      <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                      <span>{r.tradeDateWarning} Row-level deal dates are preserved separately and are not used as the report date.</span>
+                    </div>
+                  )}
                 </div>
                 {r.status === "NEEDS_REVIEW" && (
                   <p className="text-xs text-amber-400 mt-1">Select report type above and re-upload</p>

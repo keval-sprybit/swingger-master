@@ -69,3 +69,75 @@ export async function countUploadsForDate(
 export async function listUploads() {
   return prisma.csvUpload.findMany({ orderBy: { createdAt: "desc" }, take: 200 });
 }
+
+// For each report type on a given trading date, return the upload IDs of the
+// single most recent valid (PROCESSED) snapshot. The dashboard uses this to
+// show only the LATEST snapshot per report type, avoiding combining multiple
+// intraday snapshots.
+//
+// Snapshots are identified by `uploadVersion`. Because each batch uploads all
+// report types together and increments the per-date version for every report
+// type, all files of one snapshot share the same version number. The latest
+// version is therefore the latest snapshot.
+//
+// Returns e.g.:
+//   [{ reportType: "MOST_ACTIVE_VOLUME", version: 2, uploadIds: [15] }, ...]
+export async function latestUploadPerReportType(tradingDate: Date, version?: number) {
+  const uploads = await prisma.csvUpload.findMany({
+    where: { tradingDate, uploadStatus: "PROCESSED" },
+    orderBy: { id: "asc" },
+  });
+  if (uploads.length === 0) return [];
+  // Pick the newest version per report type.
+  const maxVersion: Record<string, number> = {};
+  for (const u of uploads) {
+    if ((maxVersion[u.reportType] ?? 0) < u.uploadVersion) maxVersion[u.reportType] = u.uploadVersion;
+  }
+  const targetVersion = version !== undefined
+    ? version
+    : Math.max(...Object.values(maxVersion)); // global max = latest snapshot
+  const result: { reportType: string; version: number; uploadIds: number[] }[] = [];
+  for (const u of uploads) {
+    if (u.uploadVersion !== targetVersion) continue;
+    let entry = result.find((r) => r.reportType === u.reportType);
+    if (!entry) {
+      entry = { reportType: u.reportType, version: u.uploadVersion, uploadIds: [] };
+      result.push(entry);
+    }
+    entry.uploadIds.push(u.id);
+  }
+  return result;
+}
+
+// Group processed uploads for a trading date into distinct snapshots, ordered
+// newest-first. Each snapshot corresponds to a distinct `uploadVersion` (all
+// report files of a batch share the same version). Used by History to let the
+// user open each intraday/EOD snapshot separately.
+export async function listSnapshotsForDate(tradingDate: Date) {
+  const uploads = await prisma.csvUpload.findMany({
+    where: { tradingDate, uploadStatus: "PROCESSED" },
+    orderBy: { id: "asc" },
+  });
+  const groups = new Map<number, { version: number; analysisType: AnalysisType; createdAt: Date; reportTypes: Set<string>; uploadIds: number[] }>();
+  for (const u of uploads) {
+    let g = groups.get(u.uploadVersion);
+    if (!g) {
+      g = { version: u.uploadVersion, analysisType: u.analysisType, createdAt: u.createdAt, reportTypes: new Set<string>(), uploadIds: [] };
+      groups.set(u.uploadVersion, g);
+    }
+    g.reportTypes.add(u.reportType);
+    g.uploadIds.push(u.id);
+    if (u.createdAt > g.createdAt) g.createdAt = u.createdAt;
+  }
+  const list = [...groups.values()].map((g) => ({
+    version: g.version,
+    analysisType: g.analysisType,
+    createdAt: g.createdAt,
+    createdAtISO: g.createdAt.toISOString(),
+    reportTypes: [...g.reportTypes],
+    reportCount: g.reportTypes.size,
+    uploadIds: g.uploadIds,
+  }));
+  list.sort((a, b) => b.version - a.version);
+  return list;
+}

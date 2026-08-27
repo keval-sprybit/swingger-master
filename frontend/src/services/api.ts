@@ -10,7 +10,8 @@ async function json<T = any>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  dashboard: (date?: string) => json(`/dashboard?${date ? `date=${date}` : ""}`),
+  dashboard: (date?: string, snapshot?: number) =>
+    json(`/dashboard?${date ? `date=${date}` : ""}${snapshot ? `${date ? "&" : ""}snapshot=${snapshot}` : ""}`),
   candidates: (date?: string, limit = 100) =>
     json(`/candidates?${date ? `date=${date}&` : ""}limit=${limit}`),
   candidateDetail: (symbol: string, date?: string) =>

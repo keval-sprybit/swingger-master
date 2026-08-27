@@ -17,6 +17,7 @@ export interface ProcessResult {
   status: "PROCESSED" | "DUPLICATE" | "NEEDS_REVIEW" | "FAILED";
   reportType?: string;
   tradingDate?: string;
+  filenameDate?: string;
   uploadId?: number;
   rowCount?: number;
   validRows?: number;
@@ -26,6 +27,10 @@ export interface ProcessResult {
   candidates?: string[];
   storedFilename?: string;
   checksum?: string;
+  // Present for LARGE_DEALS when row-level deal dates differ from the report
+  // trading date, so the UI can surface the distinction.
+  dealDatesDetected?: boolean;
+  tradeDateWarning?: string;
 }
 
 function toReportType(s: string): ReportType | null {
@@ -70,9 +75,7 @@ export async function processUpload(
   } else {
     tradingDate = new Date();
     tradingDate.setHours(0, 0, 0, 0);
-  }
-
-  const checksum = sha256(buffer);
+  }  const checksum = sha256(buffer);
   const existing = await findUploadByChecksum(checksum);
   if (existing) {
     return {
@@ -128,11 +131,16 @@ export async function processUpload(
     status: "PROCESSED",
     reportType,
     tradingDate: toDateString(tradingDate),
+    filenameDate: parsed.filenameDate ? toDateString(parsed.filenameDate) : undefined,
     uploadId: upload.id,
     rowCount: parsed.rowCount,
     validRows: parsed.validRows,
     invalidRows: parsed.invalidRows,
     storedFilename,
     checksum,
+    dealDatesDetected: parsed.dealDatesDetected,
+    tradeDateWarning: parsed.dealDatesDetected
+      ? "Report date differs from row-level deal dates. Row-level dates are preserved separately."
+      : undefined,
   };
 }
