@@ -85,9 +85,31 @@ export const analysisController = {
       };
     });
 
-    // Sections — use only a single snapshot per report type so that multiple
-    // INTRADAY uploads for the same trading date are never combined.
-    const latestEntries = await latestUploadPerReportType(date, snapshotVersion);
+    // Sections — show a single snapshot per report type so that multiple
+    // INTRADAY/EOD uploads for the same trading date are never combined.
+    //
+    // Decide which analysis type to surface:
+    //  - while the market is open, show the latest INTRADAY snapshot;
+    //  - after close, show the latest EOD snapshot;
+    //  - when an explicit historical snapshot version is requested, use that
+    //    snapshot's own analysis type.
+    const marketStatus = marketStatusNow();
+    const marketOpen = marketStatus !== "CLOSED";
+    let sectionAnalysisType: "INTRADAY" | "EOD" = marketOpen ? "INTRADAY" : "EOD";
+    if (snapshotVersion !== undefined) {
+      const snapshotUpload = await prisma.csvUpload.findFirst({
+        where: { tradingDate: date, uploadStatus: "PROCESSED", uploadVersion: snapshotVersion },
+        orderBy: { id: "asc" },
+      });
+      if (snapshotUpload) sectionAnalysisType = snapshotUpload.analysisType === "EOD" ? "EOD" : "INTRADAY";
+    }
+
+    const latestEntries = await latestUploadPerReportType(date, { version: snapshotVersion, analysisType: sectionAnalysisType });
+    let sectionSnapshotCreatedAt: string | null = null;
+    if (snapshotVersion !== undefined) {
+      const s = (await listSnapshotsForDate(date)).find((x) => x.version === snapshotVersion);
+      sectionSnapshotCreatedAt = s?.createdAtISO ?? null;
+    }
     const uploadIdsFor = (reportType: string): number[] | undefined =>
       latestEntries.find((e) => e.reportType === reportType)?.uploadIds;
     const idFilter = (reportType: string): { uploadId: { in: number[] } } | { tradingDate: Date } => {
@@ -95,11 +117,15 @@ export const analysisController = {
       return ids && ids.length > 0 ? { uploadId: { in: ids } } : { tradingDate: date };
     };
 
-    const [maVol, volGainers, w52h, large] = await Promise.all([
-      prisma.mostActiveVolume.findMany({ where: idFilter("MOST_ACTIVE_VOLUME") as any, orderBy: { volume: "desc" }, take: 10, include: { stock: true } }),
-      prisma.volumeGainer.findMany({ where: idFilter("VOLUME_GAINERS") as any, orderBy: { volumeRatio1w: "desc" }, take: 10, include: { stock: true } }),
-      prisma.week52High.findMany({ where: idFilter("WEEK52_HIGH") as any, orderBy: { ltp: "desc" }, take: 20, include: { stock: true } }),
-      prisma.largeDeal.findMany({ where: idFilter("LARGE_DEALS") as any, orderBy: { quantityTraded: "desc" }, take: 30, include: { stock: true } }),
+    const [maVol, maVal, volGainers, w52h, w52l, topGainers, topLosers, large] = await Promise.all([
+      prisma.mostActiveVolume.findMany({ where: idFilter("MOST_ACTIVE_VOLUME") as any, orderBy: { volume: "desc" }, take: 20, include: { stock: true } }),
+      prisma.mostActiveValue.findMany({ where: idFilter("MOST_ACTIVE_VALUE") as any, orderBy: { turnover: "desc" }, take: 10, include: { stock: true } }),
+      prisma.volumeGainer.findMany({ where: idFilter("VOLUME_GAINERS") as any, orderBy: { volumeRatio1w: "desc" }, take: 20, include: { stock: true } }),
+      prisma.week52High.findMany({ where: idFilter("WEEK52_HIGH") as any, orderBy: { ltp: "desc" }, take: 10, include: { stock: true } }),
+      prisma.week52Low.findMany({ where: idFilter("WEEK52_LOW") as any, orderBy: { ltp: "asc" }, take: 10, include: { stock: true } }),
+      prisma.topGainer.findMany({ where: idFilter("TOP_GAINERS") as any, orderBy: [{ rank: "asc" }, { changePercent: "desc" }], take: 20, include: { stock: true } }),
+      prisma.topLoser.findMany({ where: idFilter("TOP_LOSERS") as any, orderBy: [{ rank: "asc" }, { changePercent: "asc" }], take: 20, include: { stock: true } }),
+      prisma.largeDeal.findMany({ where: idFilter("LARGE_DEALS") as any, orderBy: { quantityTraded: "desc" }, take: 12, include: { stock: true } }),
     ]);
 
     const watchlist = run
@@ -121,16 +147,23 @@ export const analysisController = {
     res.json(
       toPlain({
         tradingDate: dateStr,
-        marketStatus: marketStatusNow(),
+        marketStatus: marketStatus,
         completeness: comp,
         analysisType: run?.analysisType ?? null,
         analysisStatus: run?.status ?? null,
+        sectionAnalysisType,
+        sectionSnapshotVersion: latestEntries[0]?.version ?? null,
+        sectionSnapshotCreatedAt,
         nextTradingDate: run?.id ? (await prisma.dailyWatchlist.findUnique({ where: { analysisRunId: run.id } }))?.nextTradingDate?.toISOString().slice(0, 10) : null,
         topCandidates,
         sections: {
           mostActiveVolume: maVol,
+          mostActiveValue: maVal,
           volumeGainers: volGainers,
           week52High: w52h,
+          week52Low: w52l,
+          topGainers: topGainers,
+          topLosers: topLosers,
           largeDeals: large,
           avoid: avoided,
           noTrade,

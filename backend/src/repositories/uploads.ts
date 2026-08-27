@@ -80,11 +80,16 @@ export async function listUploads() {
 // type, all files of one snapshot share the same version number. The latest
 // version is therefore the latest snapshot.
 //
+// If `analysisType` is given, only uploads of that type are considered, so an
+// INTRADAY dashboard never mixes in EOD rows (and vice-versa).
+//
 // Returns e.g.:
 //   [{ reportType: "MOST_ACTIVE_VOLUME", version: 2, uploadIds: [15] }, ...]
-export async function latestUploadPerReportType(tradingDate: Date, version?: number) {
+export async function latestUploadPerReportType(tradingDate: Date, opts?: { version?: number; analysisType?: AnalysisType }) {
+  const version = opts?.version;
+  const analysisType = opts?.analysisType;
   const uploads = await prisma.csvUpload.findMany({
-    where: { tradingDate, uploadStatus: "PROCESSED" },
+    where: { tradingDate, uploadStatus: "PROCESSED", ...(analysisType ? { analysisType } : {}) },
     orderBy: { id: "asc" },
   });
   if (uploads.length === 0) return [];
@@ -96,12 +101,12 @@ export async function latestUploadPerReportType(tradingDate: Date, version?: num
   const targetVersion = version !== undefined
     ? version
     : Math.max(...Object.values(maxVersion)); // global max = latest snapshot
-  const result: { reportType: string; version: number; uploadIds: number[] }[] = [];
+  const result: { reportType: string; version: number; analysisType: AnalysisType; uploadIds: number[] }[] = [];
   for (const u of uploads) {
     if (u.uploadVersion !== targetVersion) continue;
     let entry = result.find((r) => r.reportType === u.reportType);
     if (!entry) {
-      entry = { reportType: u.reportType, version: u.uploadVersion, uploadIds: [] };
+      entry = { reportType: u.reportType, version: u.uploadVersion, analysisType: u.analysisType, uploadIds: [] };
       result.push(entry);
     }
     entry.uploadIds.push(u.id);

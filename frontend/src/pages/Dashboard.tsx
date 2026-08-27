@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
-import { todayISO, fmt, fmtPct, fmtCurrency, fmtVol } from "../utils";
+import { todayISO, fmtPct, fmtCurrency, fmtVol } from "../utils";
 import ScoreBadge from "../components/ScoreBadge";
 import StatusBadge from "../components/StatusBadge";
 import { BarChart3, ArrowUpRight, Clock, AlertTriangle, FileCheck, List, Eye } from "lucide-react";
@@ -51,7 +51,8 @@ export default function Dashboard() {
       {snapshot !== undefined && (
         <div className="card bg-amber-900/10 border-amber-700/30 text-amber-300 text-sm flex items-center gap-2">
           <Clock size={15} />
-          Viewing snapshot v{snapshot}.{" "}
+          Viewing snapshot v{snapshot}
+          {data?.sectionSnapshotCreatedAt ? <> · {new Date(data.sectionSnapshotCreatedAt).toLocaleString()}</> : null}.{" "}
           <Link to={date ? `/?date=${date}` : "/"} className="underline hover:text-amber-200">Show latest snapshot</Link>
         </div>
       )}
@@ -143,37 +144,83 @@ export default function Dashboard() {
             )}
           </section>
 
-          {/* Section cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {data.sections.mostActiveVolume.length > 0 && (
-              <Section title="Most Active by Volume" items={data.sections.mostActiveVolume} fields={[
-                { key: "ltp", label: "LTP", fmt: fmtCurrency },
-                { key: "changePercent", label: "Chg%", fmt: fmtPct },
-                { key: "turnover", label: "Turnover", fmt: fmtVol },
-              ]} />
-            )}
-            {data.sections.volumeGainers.length > 0 && (
-              <Section title="Volume Gainers" items={data.sections.volumeGainers} fields={[
-                { key: "todayLtp", label: "LTP", fmt: fmtCurrency },
-                { key: "todayChangePercent", label: "Chg%", fmt: fmtPct },
-                { key: "volumeRatio1w", label: "Ratio 1w", fmt: (v: any) => v ? Number(v).toFixed(1) + "x" : "—" },
-              ]} />
-            )}
-            {data.sections.week52High.length > 0 && (
-              <Section title="52 Week High" items={data.sections.week52High} fields={[
-                { key: "ltp", label: "LTP", fmt: fmtCurrency },
-                { key: "changePercent", label: "Chg%", fmt: fmtPct },
-                { key: "new52wHigh", label: "52W High", fmt: fmtCurrency },
-              ]} />
-            )}
-            {data.sections.largeDeals.length > 0 && (
-              <Section title="Large Deals" items={data.sections.largeDeals.slice(0, 12)} fields={[
-                { key: "buySell", label: "Side", fmt: (v: any) => v ?? "—" },
-                { key: "quantityTraded", label: "Qty", fmt: (v: any) => v ? Number(v).toLocaleString() : "—" },
-                { key: "tradePrice", label: "Price", fmt: fmtCurrency },
-              ]} symbolKey="symbol" />
-            )}
-          </div>
+          {/* Report sections — all 8 supported reports in a 2-column grid */}
+          <section>
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h2 className="text-lg font-bold text-gray-100">Market Snapshot</h2>
+              {snapshot !== undefined ? (
+                <span className="text-xs text-amber-300 bg-amber-900/20 px-2.5 py-1 rounded-full border border-amber-500/30">
+                  Snapshot v{snapshot}
+                  {data?.sectionSnapshotCreatedAt ? ` · ${new Date(data.sectionSnapshotCreatedAt).toLocaleString()}` : ""}
+                </span>
+              ) : (
+                <span className="text-xs text-emerald-400 bg-emerald-900/20 px-2.5 py-1 rounded-full border border-emerald-500/30">
+                  Showing latest {data?.sectionAnalysisType ?? "INTRADAY"} snapshot
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Section title="Most Active by Volume" items={data.sections.mostActiveVolume} dataKey="mostActiveVolume"
+                columns={[
+                  { key: "symbol", label: "Symbol", fmt: (v: any) => v, bold: true },
+                  { key: "ltp", label: "LTP", fmt: fmtCurrency },
+                  { key: "changePercent", label: "Chg%", fmt: fmtPct, colored: true },
+                  { key: "volume", label: "Volume", fmt: fmtVol },
+                  { key: "turnover", label: "Turnover", fmt: fmtVol },
+                ]} />
+              <Section title="Most Active by Value" items={data.sections.mostActiveValue} dataKey="mostActiveValue"
+                columns={[
+                  { key: "symbol", label: "Symbol", fmt: (v: any) => v, bold: true },
+                  { key: "ltp", label: "LTP", fmt: fmtCurrency },
+                  { key: "changePercent", label: "Chg%", fmt: fmtPct, colored: true },
+                  { key: "volume", label: "Volume", fmt: fmtVol },
+                  { key: "turnover", label: "Turnover", fmt: fmtVol },
+                ]} />
+              <Section title="Volume Gainers" items={data.sections.volumeGainers} dataKey="volumeGainers"
+                columns={[
+                  { key: "symbol", label: "Symbol", fmt: (v: any) => v, bold: true },
+                  { key: "todayLtp", label: "LTP", fmt: fmtCurrency },
+                  { key: "todayChangePercent", label: "Chg%", fmt: fmtPct, colored: true },
+                  { key: "volumeRatio1w", label: "Ratio 1w", fmt: (v: any) => (v !== null && v !== undefined && !isNaN(v) ? Number(v).toFixed(1) + "x" : "—") },
+                  { key: "todayVolume", label: "Volume", fmt: fmtVol },
+                ]} />
+              <Section title="New 52 Week High" items={data.sections.week52High} dataKey="week52High"
+                columns={[
+                  { key: "symbol", label: "Symbol", fmt: (v: any) => v, bold: true },
+                  { key: "ltp", label: "LTP", fmt: fmtCurrency },
+                  { key: "changePercent", label: "Chg%", fmt: fmtPct, colored: true },
+                  { key: "new52wHigh", label: "52W High", fmt: fmtCurrency },
+                ]} />
+              <Section title="New 52 Week Low" items={data.sections.week52Low} dataKey="week52Low"
+                columns={[
+                  { key: "symbol", label: "Symbol", fmt: (v: any) => v, bold: true },
+                  { key: "ltp", label: "LTP", fmt: fmtCurrency },
+                  { key: "changePercent", label: "Chg%", fmt: fmtPct, colored: true },
+                  { key: "new52wLow", label: "52W Low", fmt: fmtCurrency },
+                ]} />
+              <Section title="Top 20 Gainers" items={data.sections.topGainers} dataKey="topGainers"
+                columns={[
+                  { key: "symbol", label: "Symbol", fmt: (v: any) => v, bold: true },
+                  { key: "ltp", label: "LTP", fmt: fmtCurrency },
+                  { key: "changePercent", label: "Chg%", fmt: fmtPct, colored: true },
+                  { key: "volume", label: "Volume", fmt: fmtVol },
+                ]} />
+              <Section title="Top 20 Losers" items={data.sections.topLosers} dataKey="topLosers"
+                columns={[
+                  { key: "symbol", label: "Symbol", fmt: (v: any) => v, bold: true },
+                  { key: "ltp", label: "LTP", fmt: fmtCurrency },
+                  { key: "changePercent", label: "Chg%", fmt: fmtPct, colored: true },
+                  { key: "volume", label: "Volume", fmt: fmtVol },
+                ]} />
+              <Section title="Large Deals / Bulk Deals" items={data.sections.largeDeals} dataKey="largeDeals"
+                columns={[
+                  { key: "symbol", label: "Symbol", fmt: (v: any) => v, bold: true },
+                  { key: "buySell", label: "Side", fmt: (v: any) => (v ? String(v).toUpperCase() : "—"), sideBadge: true },
+                  { key: "quantityTraded", label: "Qty", fmt: (v: any) => (v !== null && v !== undefined ? Number(v).toLocaleString("en-IN") : "—") },
+                  { key: "tradePrice", label: "Price", fmt: fmtCurrency },
+                ]} />
+            </div>
+          </section>
 
           {/* Watchlist summary */}
           {data.watchlist && data.watchlist.length > 0 && (
@@ -225,26 +272,74 @@ export default function Dashboard() {
   );
 }
 
-function Section({ title, items, fields, symbolKey = "symbol" }: { title: string; items: any[]; fields: { key: string; label: string; fmt: (v: any) => string }[]; symbolKey?: string }) {
-  if (!items || items.length === 0) return null;
+function Section({
+  title,
+  items,
+  dataKey,
+  columns,
+}: {
+  title: string;
+  items: any[];
+  dataKey: string;
+  columns: { key: string; label: string; fmt: (v: any) => string; bold?: boolean; colored?: boolean; sideBadge?: boolean }[];
+}) {
+  const data = Array.isArray(items) ? items : [];
+  const symbol = (item: any) => item.symbol || item.stock?.symbol || "";
+  const toHref = (sym: string) => (sym ? `/candidates/${encodeURIComponent(sym)}` : null);
+
   return (
-    <div className="card">
+    <div className="card flex flex-col min-h-[200px]">
       <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">{title}</h3>
-      <div className="space-y-1.5 max-h-48 overflow-y-auto">
-        {items.map((item: any, i: number) => {
-          const sym = item[symbolKey] || item.stock?.symbol || item.symbol || "";
-          return (
-            <div key={i} className="flex items-center justify-between text-xs py-1 border-b border-gray-800/50 last:border-0">
-              <span className="font-semibold text-gray-200 truncate w-24">{sym}</span>
-              <div className="flex gap-3 text-gray-400">
-                {fields.map((f) => (
-                  <span key={f.key} className="w-20 text-right">{f.label}: {f.fmt(item[f.key])}</span>
+      {data.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center text-gray-600 text-sm py-8">No data available for this snapshot.</div>
+      ) : (
+        <div className="max-h-64 overflow-y-auto -mr-2 pr-1">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-gray-900">
+              <tr className="text-left text-[9px] uppercase tracking-wider text-gray-600 border-b border-gray-800">
+                {columns.map((c) => (
+                  <th key={c.key} className="pb-1.5 pr-2 whitespace-nowrap">{c.label}</th>
                 ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((item: any, i: number) => {
+                const sym = symbol(item);
+                const href = toHref(sym);
+                return (
+                  <tr key={i} className="border-b border-gray-800/40 last:border-0">
+                    {columns.map((c, ci) => {
+                      const val = item[c.key];
+                      let cell: ReactNode;
+                      if (c.key === "symbol") {
+                        const symCell = sym || "—";
+                        cell = href ? <Link to={href} className="font-semibold text-gray-100 hover:text-emerald-400 transition-colors whitespace-nowrap">{symCell}</Link> : <span className="font-semibold text-gray-100">{symCell}</span>;
+                      } else if (c.sideBadge) {
+                        const buy = String(val ?? "").toUpperCase() === "BUY";
+                        const sell = String(val ?? "").toUpperCase() === "SELL";
+                        cell = (
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${buy ? "bg-emerald-600/20 text-emerald-400" : sell ? "bg-red-600/20 text-red-400" : "bg-gray-700/30 text-gray-400"}`}>
+                            {c.fmt(val)}
+                          </span>
+                        );
+                      } else if (c.colored && val !== null && val !== undefined && !isNaN(Number(val))) {
+                        cell = <span className={Number(val) >= 0 ? "text-emerald-400" : "text-red-400"}>{c.fmt(val)}</span>;
+                      } else {
+                        cell = <span className="text-gray-400">{c.fmt(val)}</span>;
+                      }
+                      return (
+                        <td key={ci} className={`py-1.5 pr-2 whitespace-nowrap ${c.bold ? "" : "text-right"}`}>
+                          {cell}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
