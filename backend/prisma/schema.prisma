@@ -1,0 +1,517 @@
+// Prisma schema for NSE Swing Trading Analyzer
+// MySQL 8+. Run `prisma migrate dev` to create tables automatically.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum ReportType {
+  MOST_ACTIVE_VOLUME
+  MOST_ACTIVE_VALUE
+  VOLUME_GAINERS
+  WEEK52_HIGH
+  WEEK52_LOW
+  TOP_GAINERS
+  TOP_LOSERS
+  LARGE_DEALS
+  NEEDS_REVIEW
+}
+
+enum AnalysisType {
+  EOD
+  PRE_MARKET
+  INTRADAY
+  PARTIAL
+}
+
+enum UploadStatus {
+  PENDING
+  DETECTED
+  PROCESSED
+  FAILED
+  DUPLICATE
+  NEEDS_REVIEW
+}
+
+enum AnalysisStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  PARTIAL
+}
+
+enum SetupStatus {
+  BUY_SETUP
+  WATCH
+  WAIT_FOR_BREAKOUT
+  WAIT_FOR_PULLBACK
+  CHASE_RISK
+  AVOID
+  INSUFFICIENT_DATA
+  NO_TRADE
+}
+
+enum ScoreClass {
+  A_PLUS
+  A
+  B
+  C
+  D
+}
+
+enum MarketStatus {
+  PRE_MARKET
+  OPEN
+  CLOSED
+}
+
+model Stock {
+  id          Int      @id @default(autoincrement())
+  symbol      String   @unique
+  companyName String?
+  exchange    String   @default("NSE")
+  series      String   @default("EQ")
+  isin        String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  mostActiveVolumes MostActiveVolume[]
+  mostActiveValues  MostActiveValue[]
+  volumeGainers     VolumeGainer[]
+  week52Highs       Week52High[]
+  week52Lows        Week52Low[]
+  topGainers        TopGainer[]
+  topLosers         TopLoser[]
+  largeDeals        LargeDeal[]
+  metrics           DailyStockMetric[]
+  scores            DailyStockScore[]
+  tradeSetups       TradeSetup[]
+  watchlistItems    WatchlistItem[]
+  paperTrades       PaperTrade[]
+
+  @@index([symbol])
+}
+
+model TradingDay {
+  id           Int          @id @default(autoincrement())
+  tradingDate  DateTime     @unique
+  marketStatus MarketStatus @default(CLOSED)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([tradingDate])
+}
+
+model CsvUpload {
+  id             Int        @id @default(autoincrement())
+  originalFilename String
+  storedFilename String
+  reportType     ReportType
+  tradingDate    DateTime?
+  filenameDate   DateTime?
+  detectedDate   DateTime?
+  uploadVersion    Int          @default(1)
+  analysisType     AnalysisType @default(EOD)
+  uploadStatus     UploadStatus @default(PENDING)
+  rowCount         Int          @default(0)
+  validRows        Int          @default(0)
+  invalidRows      Int          @default(0)
+  checksum         String
+  errorMessage     String?
+  metadata         Json?
+  createdAt        DateTime     @default(now())
+  processedAt      DateTime?
+
+  @@index([detectedDate])
+  @@index([reportType])
+  @@index([filenameDate])
+}
+
+model MostActiveVolume {
+  id              Int      @id @default(autoincrement())
+  tradingDate     DateTime
+  uploadId        Int
+  stockId         Int
+  symbol          String
+  openPrice       Decimal? @db.Decimal(18, 4)
+  highPrice       Decimal? @db.Decimal(18, 4)
+  lowPrice        Decimal? @db.Decimal(18, 4)
+  previousClose   Decimal? @db.Decimal(18, 4)
+  ltp             Decimal? @db.Decimal(18, 4)
+  changePercent   Decimal? @db.Decimal(10, 4)
+  volume          BigInt?
+  turnover        Decimal? @db.Decimal(24, 4)
+  corporateAction String?
+  createdAt       DateTime @default(now())
+
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  @@index([tradingDate])
+  @@index([stockId])
+}
+
+model MostActiveValue {
+  id              Int      @id @default(autoincrement())
+  tradingDate     DateTime
+  uploadId        Int
+  stockId         Int
+  symbol          String
+  openPrice       Decimal? @db.Decimal(18, 4)
+  highPrice       Decimal? @db.Decimal(18, 4)
+  lowPrice        Decimal? @db.Decimal(18, 4)
+  previousClose   Decimal? @db.Decimal(18, 4)
+  ltp             Decimal? @db.Decimal(18, 4)
+  changePercent   Decimal? @db.Decimal(10, 4)
+  volume          BigInt?
+  turnover        Decimal? @db.Decimal(24, 4)
+  corporateAction String?
+  createdAt       DateTime @default(now())
+
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  @@index([tradingDate])
+  @@index([stockId])
+}
+
+model VolumeGainer {
+  id                 Int      @id @default(autoincrement())
+  tradingDate        DateTime
+  uploadId           Int
+  stockId            Int
+  symbol             String
+  securityName       String?
+  todayVolume        BigInt?
+  avgVolume1w        BigInt?
+  volumeChange1w     Decimal? @db.Decimal(10, 4)
+  avgVolume2w        BigInt?
+  volumeChange2w     Decimal? @db.Decimal(10, 4)
+  todayLtp           Decimal? @db.Decimal(18, 4)
+  todayChangePercent Decimal? @db.Decimal(10, 4)
+  todayTurnover      Decimal? @db.Decimal(24, 4)
+  volumeRatio1w      Decimal? @db.Decimal(12, 4)
+  volumeRatio2w      Decimal? @db.Decimal(12, 4)
+  createdAt          DateTime @default(now())
+
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  @@index([tradingDate])
+  @@index([stockId])
+}
+
+model Week52High {
+  id               Int       @id @default(autoincrement())
+  tradingDate      DateTime
+  uploadId         Int
+  stockId          Int
+  symbol           String
+  series           String?
+  ltp              Decimal?  @db.Decimal(18, 4)
+  changePercent    Decimal?  @db.Decimal(10, 4)
+  new52wHigh       Decimal?  @db.Decimal(18, 4)
+  previousHigh     Decimal?  @db.Decimal(18, 4)
+  previousHighDate DateTime?
+  createdAt        DateTime  @default(now())
+
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  @@index([tradingDate])
+  @@index([stockId])
+}
+
+model Week52Low {
+  id              Int       @id @default(autoincrement())
+  tradingDate     DateTime
+  uploadId        Int
+  stockId         Int
+  symbol          String
+  series          String?
+  ltp             Decimal?  @db.Decimal(18, 4)
+  changePercent   Decimal?  @db.Decimal(10, 4)
+  new52wLow       Decimal?  @db.Decimal(18, 4)
+  previousLow     Decimal?  @db.Decimal(18, 4)
+  previousLowDate DateTime?
+  createdAt       DateTime  @default(now())
+
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  @@index([tradingDate])
+  @@index([stockId])
+}
+
+model TopGainer {
+  id              Int      @id @default(autoincrement())
+  tradingDate     DateTime
+  uploadId        Int
+  stockId         Int
+  symbol          String
+  openPrice       Decimal? @db.Decimal(18, 4)
+  highPrice       Decimal? @db.Decimal(18, 4)
+  lowPrice        Decimal? @db.Decimal(18, 4)
+  previousClose   Decimal? @db.Decimal(18, 4)
+  ltp             Decimal? @db.Decimal(18, 4)
+  changePercent   Decimal? @db.Decimal(10, 4)
+  volume          BigInt?
+  turnover        Decimal? @db.Decimal(24, 4)
+  corporateAction String?
+  rank            Int?
+  createdAt       DateTime @default(now())
+
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  @@index([tradingDate])
+  @@index([stockId])
+}
+
+model TopLoser {
+  id              Int      @id @default(autoincrement())
+  tradingDate     DateTime
+  uploadId        Int
+  stockId         Int
+  symbol          String
+  openPrice       Decimal? @db.Decimal(18, 4)
+  highPrice       Decimal? @db.Decimal(18, 4)
+  lowPrice        Decimal? @db.Decimal(18, 4)
+  previousClose   Decimal? @db.Decimal(18, 4)
+  ltp             Decimal? @db.Decimal(18, 4)
+  changePercent   Decimal? @db.Decimal(10, 4)
+  volume          BigInt?
+  turnover        Decimal? @db.Decimal(24, 4)
+  corporateAction String?
+  rank            Int?
+  createdAt       DateTime @default(now())
+
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  @@index([tradingDate])
+  @@index([stockId])
+}
+
+model LargeDeal {
+  id             Int       @id @default(autoincrement())
+  tradingDate    DateTime
+  uploadId       Int
+  stockId        Int
+  tradeDate      DateTime?
+  filenameDate   DateTime?
+  symbol         String
+  securityName   String?
+  clientName     String?
+  buySell        String
+  quantityTraded BigInt?
+  tradePrice     Decimal?  @db.Decimal(18, 4)
+  remarks        String?
+  createdAt      DateTime  @default(now())
+
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  @@index([tradeDate])
+  @@index([stockId])
+  @@index([tradingDate])
+}
+
+model DailyStockMetric {
+  id                 Int      @id @default(autoincrement())
+  tradingDate        DateTime
+  stockId            Int
+  openPrice          Decimal? @db.Decimal(18, 4)
+  highPrice          Decimal? @db.Decimal(18, 4)
+  lowPrice           Decimal? @db.Decimal(18, 4)
+  previousClose      Decimal? @db.Decimal(18, 4)
+  ltp                Decimal? @db.Decimal(18, 4)
+  changePercent      Decimal? @db.Decimal(10, 4)
+  volume             BigInt?
+  turnover           Decimal? @db.Decimal(24, 4)
+  avgVolume1w        BigInt?
+  avgVolume2w        BigInt?
+  volumeRatio1w      Decimal? @db.Decimal(12, 4)
+  volumeRatio2w      Decimal? @db.Decimal(12, 4)
+  isMostActiveVolume Boolean  @default(false)
+  isMostActiveValue  Boolean  @default(false)
+  isVolumeGainer     Boolean  @default(false)
+  is52wHigh          Boolean  @default(false)
+  is52wLow           Boolean  @default(false)
+  isTopGainer        Boolean  @default(false)
+  isTopLoser         Boolean  @default(false)
+  bulkBuyQuantity    BigInt   @default(0)
+  bulkSellQuantity   BigInt   @default(0)
+  bulkNetQuantity    BigInt   @default(0)
+  dayRange           Decimal? @db.Decimal(18, 4)
+  closePosition      Decimal? @db.Decimal(10, 4)
+  sourceCount        Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  @@unique([tradingDate, stockId])
+  @@index([tradingDate, stockId])
+  @@index([stockId])
+}
+
+model DailyStockScore {
+  id                   Int        @id @default(autoincrement())
+  analysisRunId        Int
+  tradingDate          DateTime
+  stockId              Int
+  activityVolumeScore  Decimal    @db.Decimal(8, 2)
+  activityValueScore   Decimal    @db.Decimal(8, 2)
+  volumeExpansionScore Decimal    @db.Decimal(8, 2)
+  momentumScore        Decimal    @db.Decimal(8, 2)
+  week52Score          Decimal    @db.Decimal(8, 2)
+  gainerScore          Decimal    @db.Decimal(8, 2)
+  loserScore           Decimal    @db.Decimal(8, 2)
+  liquidityScore       Decimal    @db.Decimal(8, 2)
+  largeDealScore       Decimal    @db.Decimal(8, 2)
+  priceActionScore     Decimal    @db.Decimal(8, 2)
+  riskPenalty          Decimal    @db.Decimal(8, 2)
+  rawScore             Decimal    @db.Decimal(10, 4)
+  normalizedScore      Decimal    @db.Decimal(6, 2)
+  rank                 Int?
+  classification       ScoreClass
+  signals              Json?
+  createdAt            DateTime   @default(now())
+
+  analysisRun AnalysisRun @relation(fields: [analysisRunId], references: [id])
+  stock       Stock       @relation(fields: [stockId], references: [id])
+
+  @@index([tradingDate, normalizedScore])
+  @@index([stockId])
+}
+
+model AnalysisRun {
+  id             Int            @id @default(autoincrement())
+  tradingDate    DateTime
+  analysisType   AnalysisType
+  status         AnalysisStatus @default(PENDING)
+  startedAt      DateTime       @default(now())
+  completedAt    DateTime?
+  filesExpected  Int            @default(8)
+  filesReceived  Int            @default(0)
+  stocksAnalyzed Int            @default(0)
+  errorCount     Int            @default(0)
+  warningCount   Int            @default(0)
+  errorMessage   String?
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+
+  scores      DailyStockScore[]
+  tradeSetups TradeSetup[]
+  watchlist   DailyWatchlist?
+
+  @@index([tradingDate])
+}
+
+model TradeSetup {
+  id                    Int         @id @default(autoincrement())
+  analysisRunId         Int
+  tradingDate           DateTime
+  stockId               Int
+  setupType             String?
+  status                SetupStatus
+  currentPrice          Decimal?    @db.Decimal(18, 4)
+  breakoutLevel         Decimal?    @db.Decimal(18, 4)
+  entryLow              Decimal?    @db.Decimal(18, 4)
+  entryHigh             Decimal?    @db.Decimal(18, 4)
+  stopLoss              Decimal?    @db.Decimal(18, 4)
+  target1               Decimal?    @db.Decimal(18, 4)
+  target2               Decimal?    @db.Decimal(18, 4)
+  riskPerShare          Decimal?    @db.Decimal(18, 4)
+  reward1PerShare       Decimal?    @db.Decimal(18, 4)
+  reward2PerShare       Decimal?    @db.Decimal(18, 4)
+  riskReward1           Decimal?    @db.Decimal(8, 2)
+  riskReward2           Decimal?    @db.Decimal(8, 2)
+  capitalAvailable      Decimal?    @db.Decimal(18, 2)
+  riskPercent           Decimal?    @db.Decimal(6, 2)
+  maximumRisk           Decimal?    @db.Decimal(18, 2)
+  recommendedQuantity   Int?
+  capitalUsed           Decimal?    @db.Decimal(18, 2)
+  maximumLoss           Decimal?    @db.Decimal(18, 2)
+  triggerCondition      String?
+  invalidationCondition String?
+  reason                String?
+  warnings              Json?
+  confidenceScore       Decimal?    @db.Decimal(6, 2)
+  createdAt             DateTime    @default(now())
+
+  analysisRun    AnalysisRun     @relation(fields: [analysisRunId], references: [id])
+  stock          Stock           @relation(fields: [stockId], references: [id])
+  watchlistItems WatchlistItem[]
+
+  @@index([tradingDate])
+  @@index([stockId])
+}
+
+model DailyWatchlist {
+  id              Int       @id @default(autoincrement())
+  tradingDate     DateTime
+  nextTradingDate DateTime?
+  analysisRunId   Int       @unique
+  status          String    @default("ACTIVE")
+  createdAt       DateTime  @default(now())
+
+  analysisRun AnalysisRun     @relation(fields: [analysisRunId], references: [id])
+  items       WatchlistItem[]
+
+  @@index([tradingDate])
+}
+
+model WatchlistItem {
+  id           Int         @id @default(autoincrement())
+  watchlistId  Int
+  stockId      Int
+  rank         Int
+  score        Decimal?    @db.Decimal(6, 2)
+  status       SetupStatus
+  tradeSetupId Int?
+  reason       String?
+  createdAt    DateTime    @default(now())
+
+  watchlist  DailyWatchlist @relation(fields: [watchlistId], references: [id])
+  stock      Stock          @relation(fields: [stockId], references: [id])
+  tradeSetup TradeSetup?    @relation(fields: [tradeSetupId], references: [id])
+
+  @@index([watchlistId, rank])
+  @@index([stockId])
+}
+
+model SystemSetting {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique
+  value       String
+  valueType   String   @default("string")
+  description String?
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+}
+
+model PaperTrade {
+  id         Int       @id @default(autoincrement())
+  stockId    Int
+  symbol     String
+  entryDate  DateTime
+  entryPrice Decimal   @db.Decimal(18, 4)
+  stopLoss   Decimal   @db.Decimal(18, 4)
+  target1    Decimal?  @db.Decimal(18, 4)
+  target2    Decimal?  @db.Decimal(18, 4)
+  quantity   Int
+  exitDate   DateTime?
+  exitPrice  Decimal?  @db.Decimal(18, 4)
+  profitLoss Decimal?  @db.Decimal(18, 4)
+  result     String?   @db.VarChar(20)
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  @@index([stockId])
+  @@index([entryDate])
+}

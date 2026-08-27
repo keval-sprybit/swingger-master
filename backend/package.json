@@ -1,0 +1,39 @@
+{
+  "name": "nse-swing-backend",
+  "version": "1.0.0",
+  "description": "NSE Swing Trading Analyzer - backend API (local single-user)",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "tsx src/server.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fast-csv/parse": "^4.3.6",
+    "@prisma/client": "^5.22.0",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.5.6",
+    "decimal.js": "^10.4.3",
+    "express": "^4.21.2",
+    "multer": "^2.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.10.2",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

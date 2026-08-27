@@ -1,0 +1,154 @@
+import { prisma } from "../prisma.js";
+import { ReportType } from "@prisma/client";
+import { NormalizedRow } from "../parsers/normalize.js";
+import { upsertStock } from "./stocks.js";
+
+const CHUNK = 500;
+
+function dec(v: number | undefined): number | null {
+  return v === undefined || v === null || Number.isNaN(v) ? null : v;
+}
+function big(v: bigint | undefined): bigint | null {
+  return v === undefined || v === null ? null : v;
+}
+
+export async function saveReportRows(
+  reportType: ReportType,
+  tradingDate: Date,
+  uploadId: number,
+  rows: NormalizedRow[]
+): Promise<number> {
+  if (rows.length === 0) return 0;
+
+  // Ensure all stocks exist
+  const symbols = [...new Set(rows.map((r) => r.symbol))];
+  const symbolToId = new Map<string, number>();
+  for (const s of symbols) {
+    const id = await upsertStock(s, {
+      companyName: rows.find((r) => r.symbol === s)?.security ?? null,
+      series: rows.find((r) => r.symbol === s)?.series ?? null,
+    });
+    symbolToId.set(s, id);
+  }
+
+  const records: any[] = [];
+  for (const r of rows) {
+    const stockId = symbolToId.get(r.symbol);
+    if (stockId === undefined) continue;
+    const base = { tradingDate, uploadId, stockId, symbol: r.symbol };
+    switch (reportType) {
+      case "MOST_ACTIVE_VOLUME":
+      case "MOST_ACTIVE_VALUE":
+        records.push({
+          ...base,
+          openPrice: dec(r.openPrice),
+          highPrice: dec(r.highPrice),
+          lowPrice: dec(r.lowPrice),
+          previousClose: dec(r.previousClose),
+          ltp: dec(r.ltp),
+          changePercent: dec(r.changePercent),
+          volume: big(r.volume),
+          turnover: dec(r.turnover),
+          corporateAction: r.corporateAction ?? null,
+        });
+        break;
+      case "VOLUME_GAINERS":
+        records.push({
+          ...base,
+          securityName: r.security ?? null,
+          todayVolume: big(r.todayVolume),
+          avgVolume1w: big(r.avgVolume1w),
+          volumeChange1w: dec(r.volumeChange1w),
+          avgVolume2w: big(r.avgVolume2w),
+          volumeChange2w: dec(r.volumeChange2w),
+          todayLtp: dec(r.todayLtp),
+          todayChangePercent: dec(r.todayChangePercent),
+          todayTurnover: dec(r.todayTurnover),
+          volumeRatio1w: dec(r.volumeRatio1w),
+          volumeRatio2w: dec(r.volumeRatio2w),
+        });
+        break;
+      case "WEEK52_HIGH":
+        records.push({
+          ...base,
+          series: r.series ?? null,
+          ltp: dec(r.ltp),
+          changePercent: dec(r.changePercent),
+          new52wHigh: dec(r.new52wHigh),
+          previousHigh: dec(r.previousHigh),
+          previousHighDate: r.previousHighDate ?? null,
+        });
+        break;
+      case "WEEK52_LOW":
+        records.push({
+          ...base,
+          series: r.series ?? null,
+          ltp: dec(r.ltp),
+          changePercent: dec(r.changePercent),
+          new52wLow: dec(r.new52wLow),
+          previousLow: dec(r.previousLow),
+          previousLowDate: r.previousLowDate ?? null,
+        });
+        break;
+      case "TOP_GAINERS":
+      case "TOP_LOSERS":
+        records.push({
+          ...base,
+          openPrice: dec(r.openPrice),
+          highPrice: dec(r.highPrice),
+          lowPrice: dec(r.lowPrice),
+          previousClose: dec(r.previousClose),
+          ltp: dec(r.ltp),
+          changePercent: dec(r.changePercent),
+          volume: big(r.volume),
+          turnover: dec(r.turnover),
+          corporateAction: r.corporateAction ?? null,
+        });
+        break;
+      case "LARGE_DEALS":
+        records.push({
+          ...base,
+          tradeDate: r.tradeDate ?? tradingDate,
+          filenameDate: tradingDate,
+          securityName: r.security ?? null,
+          clientName: r.clientName ?? null,
+          buySell: r.buySell ?? "UNKNOWN",
+          quantityTraded: big(r.quantityTraded),
+          tradePrice: dec(r.tradePrice),
+          remarks: r.remarks ?? null,
+        });
+        break;
+      default:
+        break;
+    }
+  }
+
+  const model = (prisma as any)[tableFor(reportType)];
+  for (let i = 0; i < records.length; i += CHUNK) {
+    await model.createMany({ data: records.slice(i, i + CHUNK) });
+  }
+  return records.length;
+}
+
+function tableFor(reportType: ReportType): string {
+  switch (reportType) {
+    case "MOST_ACTIVE_VOLUME":
+      return "mostActiveVolume";
+    case "MOST_ACTIVE_VALUE":
+      return "mostActiveValue";
+    case "VOLUME_GAINERS":
+      return "volumeGainer";
+    case "WEEK52_HIGH":
+      return "week52High";
+    case "WEEK52_LOW":
+      return "week52Low";
+    case "TOP_GAINERS":
+      return "topGainer";
+    case "TOP_LOSERS":
+      return "topLoser";
+    case "LARGE_DEALS":
+      return "largeDeal";
+    default:
+      throw new Error(`Unknown report type ${reportType}`);
+  }
+}

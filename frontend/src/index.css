@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 248 250 252;
+    --foreground: 2 6 23;
+  }
+  .dark, body {
+    --background: 3 7 18;
+    --foreground: 226 232 240;
+  }
+}
+
+body {
+  background: #030712;
+  color: #e2e8f0;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #1e293b;
+}
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-gray-900/60 backdrop-blur border border-gray-800 rounded-xl;
+  }
+  .card {
+    @apply bg-gray-900 border border-gray-800 rounded-xl p-5;
+  }
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-150 text-sm;
+  }
+  .btn-primary {
+    @apply btn bg-emerald-600 hover:bg-emerald-500 text-white;
+  }
+  .btn-secondary {
+    @apply btn bg-gray-700 hover:bg-gray-600 text-gray-100;
+  }
+  .input {
+    @apply bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500;
+  }
+  .table-row {
+    @apply border-b border-gray-800 hover:bg-gray-800/50 transition-colors;
+  }
+}
