@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "fix:bulk-deals-date": "tsx scripts/fixBulkDealsDate.ts"
+    "fix:bulk-deals-date": "tsx scripts/fixBulkDealsDate.ts",
+    "fix:snapshot-reuse": "tsx scripts/fixSnapshotReuse.ts"
   },
   "dependencies": {
     "@fast-csv/parse": "^4.3.6",

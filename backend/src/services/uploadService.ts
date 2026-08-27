@@ -1,7 +1,7 @@
 import { ReportType, UploadStatus, AnalysisType } from "@prisma/client";
 import { detectAndParse } from "../parsers/index.js";
 import { sha256, storeRawFile } from "../utils/files.js";
-import { createUpload, updateUploadStatus, findUploadByChecksum, countUploadsForDate } from "../repositories/uploads.js";
+import { createUpload, updateUploadStatus, findUploadByChecksum, countUploadsForDate, createReuseUpload } from "../repositories/uploads.js";
 import { saveReportRows } from "../repositories/reports.js";
 import { rebuildDailyMetrics, ensureTradingDay } from "../repositories/metrics.js";
 import { REPORT_TYPES } from "../config/index.js";
@@ -14,7 +14,7 @@ export interface ProcessOptions {
 }
 
 export interface ProcessResult {
-  status: "PROCESSED" | "DUPLICATE" | "NEEDS_REVIEW" | "FAILED";
+  status: "PROCESSED" | "DUPLICATE" | "REUSED" | "NEEDS_REVIEW" | "FAILED";
   reportType?: string;
   tradingDate?: string;
   filenameDate?: string;
@@ -27,6 +27,8 @@ export interface ProcessResult {
   candidates?: string[];
   storedFilename?: string;
   checksum?: string;
+  // For REUSED results: the upload id this snapshot references for the report.
+  reusedFromUploadId?: number;
   // Present for LARGE_DEALS when row-level deal dates differ from the report
   // trading date, so the UI can surface the distinction.
   dealDatesDetected?: boolean;
@@ -76,8 +78,44 @@ export async function processUpload(
     tradingDate = new Date();
     tradingDate.setHours(0, 0, 0, 0);
   }  const checksum = sha256(buffer);
+  const analysisType: AnalysisType = opts.analysisType === "INTRADAY" ? AnalysisType.INTRADAY : AnalysisType.EOD;
+
+  // The version this report will occupy in the new snapshot. Because every
+  // snapshot batch uploads (or reuses) each report type, the per-date/report
+  // count grows in lock-step across report types, so all reports of one
+  // snapshot end up sharing the same version number.
+  const targetVersion = (await countUploadsForDate(tradingDate, reportType)) + 1;
+
   const existing = await findUploadByChecksum(checksum);
   if (existing) {
+    // An identical file was uploaded before. A snapshot represents the
+    // complete market state at a time, so an unchanged report must still be
+    // referenced by the new snapshot. We reuse the existing upload (no new
+    // physical file, no duplicate CSV rows) and ATTACH it to the new snapshot.
+    if (existing.uploadVersion < targetVersion) {
+      const reuse = await createReuseUpload(existing, { uploadVersion: targetVersion, analysisType });
+      // Mark it processed synchronously — it carries no data of its own.
+      await updateUploadStatus(reuse.id, UploadStatus.PROCESSED, { processedAt: new Date() });
+      return {
+        status: "REUSED",
+        reportType,
+        tradingDate: toDateString(existing.detectedDate ?? existing.filenameDate ?? tradingDate),
+        filenameDate: existing.filenameDate ? toDateString(existing.filenameDate) : undefined,
+        uploadId: reuse.id,
+        reusedFromUploadId: existing.id,
+        rowCount: existing.rowCount,
+        validRows: existing.validRows,
+        invalidRows: existing.invalidRows,
+        storedFilename: existing.storedFilename,
+        checksum,
+        dealDatesDetected: existing.reportType === ReportType.LARGE_DEALS,
+        tradeDateWarning: existing.reportType === ReportType.LARGE_DEALS
+          ? "Report unchanged; reused from a previous snapshot (no new file stored)."
+          : undefined,
+      };
+    }
+    // Otherwise the identical file already belongs to this exact snapshot — a
+    // genuine duplicate within the batch. Report it as a duplicate (no-op).
     return {
       status: "DUPLICATE",
       reportType: existing.reportType,
@@ -88,8 +126,7 @@ export async function processUpload(
     };
   }
 
-  const uploadVersion = (await countUploadsForDate(tradingDate, reportType)) + 1;
-  const analysisType: AnalysisType = opts.analysisType === "INTRADAY" ? AnalysisType.INTRADAY : AnalysisType.EOD;
+  const uploadVersion = targetVersion;
 
   const { storedFilename } = await storeRawFile(buffer, originalFilename, tradingDate);
 

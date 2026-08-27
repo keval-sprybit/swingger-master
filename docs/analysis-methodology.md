@@ -166,9 +166,17 @@ confidenceRaw = (positiveSignals / totalSignals) × 100
 
 Capped to 0–100.
 
-## Duplicate Detection
+## Duplicate Detection & Snapshot Reuse
 
-Before saving report rows, a SHA-256 checksum of the raw CSV is computed. If a file with the same checksum and same trading date already exists, the upload is rejected with a `DUPLICATE` status. This prevents re-analyzing the same data.
+Before saving report rows, a SHA-256 checksum of the raw CSV is computed. A snapshot represents the complete market state at a particular time. If a report file is identical to one from a **previous** snapshot (same checksum, older version of the same report type and analysis type):
+
+- No duplicate physical file is stored (the original file is reused).
+- No duplicate CSV rows are created.
+- The new snapshot **reuses/references** the existing upload (a thin `REUSED` upload row with the new snapshot's version is recorded, pointing back to the original via `metadata.reusedFrom`).
+
+This keeps the new snapshot complete (e.g. 8/8) even when a report hasn't changed. Only a true duplicate *within the same snapshot* is rejected with `DUPLICATE`.
+
+The same concept applies to EOD snapshots (never mixing INTRADAY and EOD reports).
 
 ## Trading Day Immutability
 

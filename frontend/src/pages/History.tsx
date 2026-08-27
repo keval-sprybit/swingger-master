@@ -49,22 +49,49 @@ export default function History() {
                 </div>
               </div>
               {d.snapshots && d.snapshots.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2 pl-1">
+                <div className="space-y-2 pl-1">
                   {d.snapshots.map((s: any, i: number) => {
-                    const time = s.createdAt ? new Date(s.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+                    const time = s.createdAt ? new Date(s.createdAt).toLocaleString() : "";
+                    const reports = s.reports ?? [];
+                    const reusedCount = reports.filter((r: any) => r.reused).length;
                     return (
-                      <Link
-                        key={i}
-                        to={`/?date=${d.tradingDate}&snapshot=${s.version}`}
-                        className="inline-flex items-center gap-2 text-xs px-2.5 py-1 rounded-md border border-gray-700 bg-gray-800/40 hover:border-emerald-500/40 hover:text-emerald-300 text-gray-300"
-                        title={`Snapshot v${s.version} — ${s.reportCount} reports (${(s.reportTypes || []).join(", ")})`}
-                      >
-                        <span className="font-semibold">{s.analysisType}</span>
-                        <span className="text-gray-500">v{s.version}</span>
-                        <span className="text-gray-500">{time}</span>
-                        <span className="text-gray-600">{s.reportCount} reports</span>
-                        {s.topCandidate && <span className="text-emerald-400">★ {s.topCandidate.symbol}</span>}
-                      </Link>
+                      <div key={i} className="border border-gray-800/60 rounded-md p-2.5 hover:border-gray-700 transition-colors">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-gray-100">{s.analysisType}</span>
+                            <span className="text-gray-500">Snapshot v{s.version}</span>
+                            {time && <span className="text-gray-500 text-xs">{time}</span>}
+                          </div>
+                          <Link
+                            to={`/?date=${d.tradingDate}&snapshot=${s.version}`}
+                            className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold"
+                          >
+                            Open →
+                          </Link>
+                        </div>
+                        <div className="mt-1.5 text-xs text-gray-500">
+                          {s.reportCount}/8 reports
+                          {reusedCount > 0 ? <> · <span className="text-amber-300">{reusedCount} unchanged · reused</span></> : null}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {reports.map((r: any, ri: number) => (
+                            <span
+                              key={ri}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border ${r.reused
+                                ? "bg-amber-900/20 border-amber-500/30 text-amber-300"
+                                : "bg-gray-800/50 border-gray-700 text-gray-300"}`}
+                              title={r.reused && r.reusedFromVersion != null ? `Unchanged — reused from Snapshot v${r.reusedFromVersion}` : r.reportType}
+                            >
+                              {r.reportType}
+                              {r.reused && (
+                                <span className="text-[9px] opacity-80">
+                                  · Reused{ r.reusedFromVersion != null ? ` from Snapshot ${r.reusedFromVersion}` : ""}
+                                </span>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
                     );
                   })}
                 </div>

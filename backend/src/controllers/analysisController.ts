@@ -276,6 +276,13 @@ export const analysisController = {
           reportCount: s.reportCount,
           reportTypes: s.reportTypes,
           uploadIds: s.uploadIds,
+          reports: (s.reports ?? []).map((r) => ({
+            reportType: r.reportType,
+            uploadId: r.uploadId,
+            reusedFrom: r.reusedFrom,
+            reusedFromVersion: r.reusedFromVersion,
+            reused: r.reusedFrom != null,
+          })),
           analysisStatus: run?.status ?? null,
           stocksAnalyzed: run?.stocksAnalyzed ?? 0,
           topCandidate: null,

@@ -39,8 +39,9 @@ Upload one or more CSV files. Detects report type, parses, stores, and computes 
 
 **Status values:**
 - `PROCESSED` — successfully parsed and stored
+- `REUSED` — file checksum already exists from a prior snapshot; the new snapshot references the existing upload (no new file/rows stored), keeping the snapshot complete
 - `NEEDS_REVIEW` — report type could not be detected; manual override required
-- `DUPLICATE` — file checksum already exists for this trading date
+- `DUPLICATE` — the identical file already belongs to the *same* snapshot (true duplicate within the batch)
 - `FAILED` — parsing or storage error
 
 ---

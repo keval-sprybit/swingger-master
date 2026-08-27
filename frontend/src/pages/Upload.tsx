@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { api } from "../services/api";
 import StatusBadge from "../components/StatusBadge";
-import { Upload as UploadIcon, X, CheckCircle2, AlertTriangle, FileWarning, Loader2 } from "lucide-react";
+import { Upload as UploadIcon, X, CheckCircle2, AlertTriangle, FileWarning, Loader2, RefreshCw } from "lucide-react";
 
 const REPORT_TYPES = [
   "MOST_ACTIVE_VOLUME", "MOST_ACTIVE_VALUE", "VOLUME_GAINERS",
@@ -127,6 +127,7 @@ export default function Upload() {
           {results.map((r: any, i: number) => (
             <div key={i} className={`card text-sm ${
               r.status === "PROCESSED" ? "border-emerald-700/30" :
+              r.status === "REUSED" ? "border-blue-700/30" :
               r.status === "DUPLICATE" ? "border-yellow-700/30" :
               "border-red-700/30"
             }`}>
@@ -134,12 +135,16 @@ export default function Upload() {
                 <div>
                   <div className="flex items-center gap-2">
                     {r.status === "PROCESSED" && <CheckCircle2 size={14} className="text-emerald-400" />}
+                    {r.status === "REUSED" && <RefreshCw size={14} className="text-blue-400" />}
                     {r.status === "DUPLICATE" && <AlertTriangle size={14} className="text-yellow-400" />}
                     {(r.status === "FAILED" || r.status === "NEEDS_REVIEW") && <FileWarning size={14} className="text-red-400" />}
                     <span className="font-semibold text-gray-100">{r.filename}</span>
                   </div>
                   <div className="mt-1.5 space-y-0.5 text-xs text-gray-400">
                     <p>Status: <span className="font-medium text-gray-200">{r.status}</span></p>
+                    {r.status === "REUSED" && (
+                      <p className="text-blue-300">Report unchanged — reused from a previous snapshot. No new file stored. Data upload #{r.reusedFromUploadId}.</p>
+                    )}
                     {r.reportType && <p>Report: {r.reportType.replace(/_/g, " ")}</p>}
                     {r.tradingDate && <p>Report Trading Date: <span className="font-medium text-gray-200">{r.tradingDate}</span></p>}
                     {r.filenameDate && r.tradingDate && r.filenameDate !== r.tradingDate && (

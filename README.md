@@ -148,6 +148,22 @@ This:
 
 It is idempotent and never deletes rows.
 
+### Backfill snapshot reuse (existing snapshots)
+
+If snapshots were created *before* reuse-on-duplicate support existed, a
+snapshot may be missing a report whose file was unchanged (e.g. an old snapshot
+showing `7/8`). Backfill the missing report as a reuse reference:
+
+```bash
+cd backend
+npm run fix:snapshot-reuse
+```
+
+This finds, per trading day + analysis type + snapshot version, any report type
+that is missing and references the newest earlier snapshot's upload for it — no
+new physical file or CSV rows are created. It is idempotent (skips reports
+already present) and never deletes rows.
+
 ## Disclaimer
 
 This application is for **educational and research purposes only**. It does not provide financial advice. Trading in equities involves risk. Always consult a SEBI-registered financial advisor before making investment decisions.
@@ -159,6 +175,7 @@ swinnger-machine/
 ├── backend/
 │   ├── prisma/schema.prisma          # Database schema (18+ models)
 │   ├── scripts/fixBulkDealsDate.ts   # Data correction for mis-dated Bulk Deals
+│   ├── scripts/fixSnapshotReuse.ts   # Backfill reuse refs for pre-feature snapshots
 │   ├── src/
 │   │   ├── parsers/                  # CSV detection, normalization, column maps
 │   │   ├── analysis/                 # Signal engine, scoring, trade setup, types
