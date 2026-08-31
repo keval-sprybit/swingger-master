@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { api, type Mode } from "../services/api";
 import { todayISO, fmt, fmtPct, fmtCurrency } from "../utils";
 import ScoreBadge from "../components/ScoreBadge";
@@ -8,7 +8,8 @@ import ModeToggle from "../components/ModeToggle";
 import { List, Search, Play, Loader2 } from "lucide-react";
 
 export default function Candidates() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const urlMode: Mode = searchParams.get("mode") === "INTRADAY" ? "INTRADAY" : "SWING";
   const urlDate = searchParams.get("date") ?? todayISO();
   const [date, setDate] = useState(urlDate);
@@ -19,6 +20,13 @@ export default function Candidates() {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState("rank");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const updateUrl = (newDate?: string, newMode?: Mode) => {
+    const params = new URLSearchParams();
+    if (newDate) params.set("date", newDate);
+    if (newMode) params.set("mode", newMode);
+    navigate({ search: params.toString() }, { replace: true });
+  };
 
   const load = async (d: string, m: Mode) => {
     setLoading(true);
@@ -75,8 +83,8 @@ export default function Candidates() {
           Stock Candidates
         </h1>
         <div className="flex items-center gap-3">
-          <ModeToggle mode={mode} onChange={(m) => { setMode(m); load(date, m); }} />
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+          <ModeToggle mode={mode} onChange={(m) => { setMode(m); updateUrl(date, m); load(date, m); }} />
+          <input type="date" value={date} onChange={(e) => { const nd = e.target.value; setDate(nd); updateUrl(nd, mode); load(nd, mode); }} className="input" />
           <button onClick={runAnalysis} disabled={running} className="btn-primary flex items-center gap-2">
             {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
             Run {mode}

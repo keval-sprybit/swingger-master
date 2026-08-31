@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { api, type Mode } from "../services/api";
 import { todayISO, fmtPct, fmtCurrency, fmtVol } from "../utils";
 import ScoreBadge from "../components/ScoreBadge";
@@ -8,16 +8,25 @@ import ModeToggle, { MODE_LABEL } from "../components/ModeToggle";
 import { BarChart3, ArrowUpRight, Clock, AlertTriangle, FileCheck, List, Eye, TrendingDown, TrendingUp } from "lucide-react";
 
 export default function Dashboard() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const urlDate = searchParams.get("date") ?? undefined;
   const urlSnapshot = searchParams.get("snapshot") ? Number(searchParams.get("snapshot")) : undefined;
-  const urlMode = searchParams.get("mode") === "INTRADAY" ? "INTRADAY" : "SWING";
+  const urlMode: Mode = searchParams.get("mode") === "INTRADAY" ? "INTRADAY" : "SWING";
   const [date, setDate] = useState(urlDate ?? todayISO());
   const [snapshot, setSnapshot] = useState<number | undefined>(urlSnapshot);
   const [mode, setMode] = useState<Mode>(urlMode);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const updateUrl = (newDate?: string, newSnapshot?: number, newMode?: Mode) => {
+    const params = new URLSearchParams();
+    if (newDate) params.set("date", newDate);
+    if (newSnapshot !== undefined) params.set("snapshot", String(newSnapshot));
+    if (newMode) params.set("mode", newMode);
+    navigate({ search: params.toString() }, { replace: true });
+  };
 
   const load = async (d: string, snap?: number, m?: Mode) => {
     setLoading(true);
@@ -50,8 +59,8 @@ export default function Dashboard() {
           <p className="text-gray-500 text-sm mt-1">Analytical decision-support tool. Market returns not guaranteed.</p>
         </div>
         <div className="flex items-center gap-3">
-          <ModeToggle mode={mode} onChange={(m) => { setMode(m); setSnapshot(undefined); load(date, undefined, m); }} />
-          <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setSnapshot(undefined); load(e.target.value, undefined, mode); }} className="input" />
+          <ModeToggle mode={mode} onChange={(m) => { setMode(m); setSnapshot(undefined); updateUrl(date, undefined, m); load(date, undefined, m); }} />
+          <input type="date" value={date} onChange={(e) => { const nd = e.target.value; setDate(nd); setSnapshot(undefined); updateUrl(nd, undefined, mode); load(nd, undefined, mode); }} className="input" />
         </div>
       </div>
 
@@ -78,7 +87,7 @@ export default function Dashboard() {
           <Clock size={15} />
           Viewing snapshot v{snapshot}
           {data?.sectionSnapshotCreatedAt ? <> · {new Date(data.sectionSnapshotCreatedAt).toLocaleString()}</> : null}.{" "}
-          <Link to={date ? `/?date=${date}` : "/"} className="underline hover:text-amber-200">Show latest snapshot</Link>
+          <Link to={`/?date=${date}&mode=${mode}`} className="underline hover:text-amber-200">Show latest snapshot</Link>
         </div>
       )}
 

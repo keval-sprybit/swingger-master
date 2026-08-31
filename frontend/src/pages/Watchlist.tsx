@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { api, type Mode } from "../services/api";
 import { todayISO, fmtCurrency } from "../utils";
 import StatusBadge from "../components/StatusBadge";
@@ -8,13 +8,21 @@ import ModeToggle from "../components/ModeToggle";
 import { Eye } from "lucide-react";
 
 export default function Watchlist() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const urlMode: Mode = searchParams.get("mode") === "INTRADAY" ? "INTRADAY" : "SWING";
   const urlDate = searchParams.get("date") ?? todayISO();
   const [date, setDate] = useState(urlDate);
   const [mode, setMode] = useState<Mode>(urlMode);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+
+  const updateUrl = (newDate?: string, newMode?: Mode) => {
+    const params = new URLSearchParams();
+    if (newDate) params.set("date", newDate);
+    if (newMode) params.set("mode", newMode);
+    navigate({ search: params.toString() }, { replace: true });
+  };
 
   const load = async (d: string, m: Mode) => {
     setLoading(true);
