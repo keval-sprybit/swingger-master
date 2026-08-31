@@ -8,6 +8,18 @@ const REPORT_TYPES = [
   "TOP_GAINERS", "TOP_LOSERS", "WEEK52_HIGH", "WEEK52_LOW", "LARGE_DEALS",
 ];
 
+const REPORT_LABELS: Record<string, string> = {
+  MOST_ACTIVE_VOLUME: "Most Active by Volume",
+  MOST_ACTIVE_VALUE: "Most Active by Value",
+  VOLUME_GAINERS: "Volume Gainers",
+  TOP_GAINERS: "Top 20 Gainers",
+  TOP_LOSERS: "Top 20 Losers",
+  WEEK52_HIGH: "New 52 Week High",
+  WEEK52_LOW: "New 52 Week Low",
+  LARGE_DEALS: "Large Deals / Bulk Deals",
+  BHAVCOPY: "NSE Bhavcopy / Daily Price Data",
+};
+
 export default function Upload() {
   const [files, setFiles] = useState<File[]>([]);
   const [analysisType, setAnalysisType] = useState("EOD");
@@ -105,7 +117,12 @@ export default function Upload() {
               <label className="text-[10px] uppercase text-gray-500 mb-1 block">Force Report Type (optional)</label>
               <select value={forceReportType} onChange={(e) => setForceReportType(e.target.value)} className="input w-full">
                 <option value="">Auto-detect</option>
-                {REPORT_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+                <optgroup label="NSE Screening Reports">
+                  {REPORT_TYPES.map((t) => <option key={t} value={t}>{REPORT_LABELS[t] ?? t.replace(/_/g, " ")}</option>)}
+                </optgroup>
+                <optgroup label="Price Data">
+                  <option value="BHAVCOPY">{REPORT_LABELS.BHAVCOPY}</option>
+                </optgroup>
               </select>
             </div>
             <div>
@@ -145,7 +162,7 @@ export default function Upload() {
                     {r.status === "REUSED" && (
                       <p className="text-blue-300">Report unchanged — reused from a previous snapshot. No new file stored. Data upload #{r.reusedFromUploadId}.</p>
                     )}
-                    {r.reportType && <p>Report: {r.reportType.replace(/_/g, " ")}</p>}
+                    {r.reportType && <p>Report: {REPORT_LABELS[r.reportType] ?? r.reportType.replace(/_/g, " ")}</p>}
                     {r.tradingDate && <p>Report Trading Date: <span className="font-medium text-gray-200">{r.tradingDate}</span></p>}
                     {r.filenameDate && r.tradingDate && r.filenameDate !== r.tradingDate && (
                       <p>Filename Date: {r.filenameDate}</p>
@@ -180,6 +197,7 @@ export default function Upload() {
       <div className="card text-xs text-gray-500 space-y-1">
         <p className="font-bold text-gray-400">Supported NSE Reports:</p>
         <p>Most Active by Volume, Most Active by Value, Volume Gainers, New 52 Week High, New 52 Week Low, Top 20 Gainers, Top 20 Losers, Large Deals / Bulk Deals</p>
+        <p className="mt-2">Price Data: NSE Bhavcopy / Daily Price Data (CM-UDiFF or standard bhavcopy format). This is stored separately as daily price-volume history and does not count toward the 8-report screening set.</p>
         <p className="mt-2">The system automatically detects the report type and trading date from the CSV headers and filename. If detection is uncertain, select the type manually above.</p>
       </div>
     </div>

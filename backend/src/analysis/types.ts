@@ -26,6 +26,13 @@ export interface MetricInput {
   prevHighPrice: number | null;
   prevLowPrice: number | null;
   prevClose: number | null;
+  // Upgraded analytical inputs (optional; existing callers are unaffected).
+  breakoutLevel?: number | null;
+  breakoutReason?: string | null;
+  support?: number | null;
+  supportReason?: string | null;
+  trend?: string | null;
+  marketCondition?: "BULLISH" | "NEUTRAL" | "BEARISH" | null;
 }
 
 export interface SignalItem {
@@ -86,4 +93,17 @@ export interface TradeSetupResult {
   reason: string | null;
   warnings: string[];
   confidenceScore: number | null;
+  // Upgraded analytical fields
+  mode?: "INTRADAY" | "SWING";
+  breakoutReason?: string | null;
+  breakoutStatus?: string | null;
+  stopLossReason?: string | null;
+  entryReason?: string | null;
+  target1Reason?: string | null;
+  trend?: string | null;
+  trendReasons?: string[];
+  marketCondition?: "BULLISH" | "NEUTRAL" | "BEARISH" | null;
+  whySelected?: string[];
+  insufficientData?: boolean;
+  technicalContext?: Record<string, unknown>;
 }

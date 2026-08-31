@@ -80,6 +80,65 @@ export async function processUpload(
   }  const checksum = sha256(buffer);
   const analysisType: AnalysisType = opts.analysisType === "INTRADAY" ? AnalysisType.INTRADAY : AnalysisType.EOD;
 
+  // Bhavcopy files are optional daily price-volume history, not part of the
+  // 8-report snapshot set. They are stored into DailyPriceBar (history) rather
+  // than a report table and do NOT advance the snapshot version.
+  if (reportType === ReportType.BHAVCOPY) {
+    const tradingDateBc = tradingDate;
+    const existing = await findUploadByChecksum(checksum);
+    if (existing) {
+      // Identical bhavcopy already ingested for this day; no duplicate bars
+      // will be created (DailyPriceBar is upserted by stock+date).
+      return {
+        status: "DUPLICATE",
+        reportType,
+        tradingDate: toDateString(existing.detectedDate ?? existing.filenameDate ?? tradingDateBc),
+        uploadId: existing.id,
+        checksum,
+        rowCount: existing.rowCount,
+        validRows: existing.validRows,
+        invalidRows: existing.invalidRows,
+        errors: ["An identical Bhavcopy file (matching SHA-256 checksum) was already ingested for this day."],
+      };
+    }
+    const { storedFilename } = await storeRawFile(buffer, originalFilename, tradingDateBc);
+    const upload = await createUpload({
+      originalFilename,
+      storedFilename,
+      reportType,
+      tradingDate: tradingDateBc,
+      filenameDate: parsed.filenameDate,
+      detectedDate: parsed.detectedDate,
+      uploadVersion: 1,
+      analysisType,
+      checksum,
+      rowCount: parsed.rowCount,
+      validRows: parsed.validRows,
+      invalidRows: parsed.invalidRows,
+      detectedColumns: parsed.headers,
+    });
+    try {
+      await ensureTradingDay(tradingDateBc);
+      await saveReportRows(reportType, tradingDateBc, upload.id, parsed.rows);
+      await updateUploadStatus(upload.id, UploadStatus.PROCESSED, { processedAt: new Date() });
+      return {
+        status: "PROCESSED",
+        reportType,
+        tradingDate: toDateString(tradingDateBc),
+        filenameDate: parsed.filenameDate ? toDateString(parsed.filenameDate) : undefined,
+        uploadId: upload.id,
+        rowCount: parsed.rowCount,
+        validRows: parsed.validRows,
+        invalidRows: parsed.invalidRows,
+        storedFilename,
+        checksum,
+      };
+    } catch (err: any) {
+      await updateUploadStatus(upload.id, UploadStatus.FAILED, { errorMessage: String(err?.message ?? err) });
+      return { status: "FAILED", reportType, tradingDate: toDateString(tradingDateBc), uploadId: upload.id, errors: [String(err?.message ?? err)] };
+    }
+  }
+
   // The version this report will occupy in the new snapshot. Because every
   // snapshot batch uploads (or reuses) each report type, the per-date/report
   // count grows in lock-step across report types, so all reports of one

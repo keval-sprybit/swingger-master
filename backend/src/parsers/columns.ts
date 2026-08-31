@@ -24,6 +24,12 @@ export type Canonical =
   | "high"
   | "low"
   | "prevClose"
+  | "close"
+  | "last"
+  | "vwap"
+  | "trades"
+  | "deliveredQty"
+  | "deliverablePct"
   | "ltp"
   | "chng"
   | "volume"
@@ -48,7 +54,8 @@ export type Canonical =
   | "buySell"
   | "qtyTraded"
   | "tradePrice"
-  | "remarks";
+  | "remarks"
+  | "isin";
 
 export interface ReportSchema {
   type: string;
@@ -198,6 +205,32 @@ export const REPORT_SCHEMAS: ReportSchema[] = [
       remarks: ["remarks"],
     },
   },
+  {
+    type: "BHAVCOPY",
+    label: "NSE Bhavcopy (Daily Price-Volume)",
+    required: ["symbol", "open", "high", "low", "close", "prevClose", "volume", "value", "date"],
+    filenameHints: ["bhavcopy", "bhav copy", "bhav", "cm", "bhavpr"],
+    columns: {
+      symbol: ["symbol", "tckrsymb", "tckr symb", "ticker symbol", "security id"],
+      series: ["series", "sctysrs", "scty srs", "security series"],
+      open: ["open", "opnpric", "oppnpric", "opn pric", "open price"],
+      high: ["high", "hghpric", "hgh pric", "high price"],
+      low: ["low", "lwpric", "lw pric", "low price"],
+      close: ["close", "clspric", "cls pric", "closing price", "close price"],
+      last: ["last", "lastpric", "last pric", "last price"],
+      prevClose: ["prev close", "prevclose", "prvsclsgpric", "prvs cls pric", "previous close", "previous closing price"],
+      ltp: ["last", "lastpric", "ltp"],
+      chng: ["%chng", "change", "chng"],
+      volume: ["traded quantity", "total traded quantity", "titled traded qty", "quantity", "volume", "tottrdqty", "trdqty", "ttltradgvol", "ttl tradg vol", "ttl trdg vol", "total traded vol"],
+      value: ["total traded value", "traded value", "value", "tottrdval", "trdval", "ttltrfval", "ttl trf val", "total transfer value"],
+      trades: ["total trades", "number of trades", "trades", "totaltrades", "ttlnboftxsexctd", "ttl nb of txs exctd"],
+      vwap: ["vwap", "average price", "avg price"],
+      deliveredQty: ["deliverable quantity", "deliverable qty", "delivered qty"],
+      deliverablePct: ["%deliverble", "%deliverable", "deliverable quantity to traded quantity", "deliverable pct"],
+      date: ["date", "timestamp", "traddt", "trad dt", "trade date", "trading date"],
+      isin: ["isin"],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -330,8 +363,9 @@ export function detectTradingDate(
     };
   }
 
-  // Non-deal reports: look for a genuine report-level DATE column.
-  const dateColIdx = normHeaders.findIndex((h) => h === "date");
+  // Non-deal reports: look for a genuine report-level DATE column (covers
+  // "DATE", Bhavcopy's "TIMESTAMP", and Bhavcopy's "TradDt" header).
+  const dateColIdx = normHeaders.findIndex((h) => h === "date" || h === "timestamp" || h === "traddt" || h === "trad dt");
   if (dateColIdx >= 0) {
     for (const row of rows.slice(0, 5)) {
       const raw = row[headers[dateColIdx]];

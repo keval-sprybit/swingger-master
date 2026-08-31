@@ -20,6 +20,12 @@ export async function saveReportRows(
 ): Promise<number> {
   if (rows.length === 0) return 0;
 
+  // Bhavcopy is stored separately as daily price-volume history (DailyPriceBar),
+  // not as a screening-report row set. Two-store it via upsert per (stock, date).
+  if (reportType === ReportType.BHAVCOPY) {
+    return saveBhavcopyRows(tradingDate, uploadId, rows);
+  }
+
   // Ensure all stocks exist
   const symbols = [...new Set(rows.map((r) => r.symbol))];
   const symbolToId = new Map<string, number>();
@@ -151,4 +157,80 @@ function tableFor(reportType: ReportType): string {
     default:
       throw new Error(`Unknown report type ${reportType}`);
   }
+}
+
+// Bhavcopy upserts a single daily OHLC bar per (stock, date). Re-uploading the
+// same day's file must not create duplicate bars — it replaces the bar.
+// Only persist rows that are normal equity cash-market securities. The NSE
+// CM-UDiFF Bhavcopy contains many other series (SME `SM`, futures `N0`-`N9`,
+// ETFs, warrants, bonds, etc.); those are NOT normal equity stocks and must not
+// be treated as objectives for the swing analyzer.
+const EQUITY_SERIES = new Set(["EQ", "BE"]);
+
+// True when the NSE security series represents a normal equity cash-market
+// security (the set the swing analyzer treats as objectives).
+export function isEquitySeries(series: string | null | undefined): boolean {
+  return EQUITY_SERIES.has((series ?? "EQ").toUpperCase());
+}
+
+async function saveBhavcopyRows(
+  tradingDate: Date,
+  uploadId: number,
+  rows: NormalizedRow[]
+): Promise<number> {
+  const equityRows = rows.filter((r) => isEquitySeries(r.series));
+  if (equityRows.length === 0) return 0;
+  const symbols = [...new Set(equityRows.map((r) => r.symbol))];
+  const symbolToId = new Map<string, number>();
+  for (const s of symbols) {
+    const id = await upsertStock(s, {
+      companyName: equityRows.find((r) => r.symbol === s)?.security ?? null,
+      series: equityRows.find((r) => r.symbol === s)?.series ?? null,
+    });
+    symbolToId.set(s, id);
+  }
+
+  let count = 0;
+  for (const r of equityRows) {
+    const stockId = symbolToId.get(r.symbol);
+    if (stockId === undefined) continue;
+    await prisma.dailyPriceBar.upsert({
+      where: { stockId_tradingDate: { stockId, tradingDate } },
+      update: {
+        openPrice: dec(r.openPrice),
+        highPrice: dec(r.highPrice),
+        lowPrice: dec(r.lowPrice),
+        closePrice: dec(r.closePrice),
+        lastPrice: dec(r.lastPrice),
+        previousClose: dec(r.previousClose),
+        vwap: dec(r.vwap),
+        tradedQty: big(r.volume),
+        turnover: dec(r.turnover),
+        trades: r.trades ?? null,
+        deliveredQty: big(r.deliveredQty),
+        deliverablePct: dec(r.deliverablePct),
+        uploadId,
+      },
+      create: {
+        tradingDate,
+        stockId,
+        symbol: r.symbol,
+        openPrice: dec(r.openPrice),
+        highPrice: dec(r.highPrice),
+        lowPrice: dec(r.lowPrice),
+        closePrice: dec(r.closePrice),
+        lastPrice: dec(r.lastPrice),
+        previousClose: dec(r.previousClose),
+        vwap: dec(r.vwap),
+        tradedQty: big(r.volume),
+        turnover: dec(r.turnover),
+        trades: r.trades ?? null,
+        deliveredQty: big(r.deliveredQty),
+        deliverablePct: dec(r.deliverablePct),
+        uploadId,
+      },
+    });
+    count++;
+  }
+  return count;
 }

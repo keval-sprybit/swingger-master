@@ -8,6 +8,17 @@ export async function createAnalysisRun(params: {
   filesExpected: number;
   filesReceived: number;
 }) {
+  // Re-run safety: exactly one result per (tradingDate, analysisType). Any
+  // prior run for the same date + analysis type is replaced (its outputs are
+  // cleared before the run row is deleted because the FKs are RESTRICT).
+  const prior = await prisma.analysisRun.findFirst({
+    where: { tradingDate: params.tradingDate, analysisType: params.analysisType },
+    orderBy: { id: "desc" },
+  });
+  if (prior) {
+    await clearRunOutputs(prior.id);
+    await prisma.analysisRun.delete({ where: { id: prior.id } });
+  }
   return prisma.analysisRun.create({
     data: {
       tradingDate: params.tradingDate,
@@ -89,6 +100,9 @@ export async function insertSetup(params: {
   tradingDate: Date;
   stockId: number;
   setup: TradeSetupResult;
+  mode?: "INTRADAY" | "SWING";
+  explainable?: { total: number; components: { key: string; label: string; score: number; max: number; reason: string }[] } | null;
+  technicalContext?: Record<string, unknown> | null;
 }) {
   const st = params.setup;
   return prisma.tradeSetup.create({
@@ -98,6 +112,7 @@ export async function insertSetup(params: {
       stockId: params.stockId,
       setupType: st.setupType,
       status: st.status as SetupStatus,
+      mode: params.mode ?? st.mode ?? "SWING",
       currentPrice: st.currentPrice,
       breakoutLevel: st.breakoutLevel,
       entryLow: st.entryLow,
@@ -121,6 +136,18 @@ export async function insertSetup(params: {
       reason: st.reason,
       warnings: st.warnings as any,
       confidenceScore: st.confidenceScore,
+      breakoutReason: st.breakoutReason,
+      breakoutStatus: st.breakoutStatus,
+      stopLossReason: st.stopLossReason,
+      target1Reason: st.target1Reason,
+      trend: st.trend,
+      trendReasons: (st.trendReasons ?? null) as any,
+      marketCondition: st.marketCondition ?? null,
+      whySelected: (st.whySelected ?? null) as any,
+      insufficientData: st.insufficientData ?? false,
+      explainableScore: params.explainable?.total ?? null,
+      explainableJson: params.explainable ? (params.explainable as any) : null,
+      technicalContext: (params.technicalContext ?? null) as any,
     },
   });
 }

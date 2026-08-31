@@ -28,6 +28,7 @@ export const REPORT_TYPES = [
   "TOP_GAINERS",
   "TOP_LOSERS",
   "LARGE_DEALS",
+  "BHAVCOPY",
 ] as const;
 
 export type ReportTypeValue = (typeof REPORT_TYPES)[number];

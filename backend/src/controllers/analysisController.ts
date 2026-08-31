@@ -1,12 +1,14 @@
 import { Response } from "express";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma.js";
 import { asyncHandler } from "../middleware/error.js";
-import { runAnalysis } from "../services/analysisService.js";
+import { runAnalysis, nextBusinessDay } from "../services/analysisService.js";
 import { toPlain } from "../utils/serialize.js";
 import { toDateString } from "../utils/date.js";
 import { REQUIRED_REPORTS } from "../config/index.js";
 import { ensureTradingDay } from "../repositories/metrics.js";
 import { latestUploadPerReportType, listSnapshotsForDate } from "../repositories/uploads.js";
+import { getDailyChart, ChartRange } from "../services/chartService.js";
 
 function marketStatusNow(): "PRE_MARKET" | "OPEN" | "CLOSED" {
   const now = new Date();
@@ -25,6 +27,48 @@ async function getLatestRun(date: Date) {
   });
 }
 
+type Mode = "INTRADAY" | "SWING";
+
+function modeFromAnalysisType(t: string | null | undefined): Mode {
+  return t === "INTRADAY" ? "INTRADAY" : "SWING";
+}
+
+// The run that backs a given analysis mode:
+//   INTRADAY -> an INTRADAY analysis run (today's intraday analysis)
+//   SWING    -> an EOD / PRE_MARKET run (next-session swing analysis)
+//
+// The stored mode is authoritative. `metadata.mode` is the true mode the run
+// was computed with; `analysisType` is a secondary consistency check. This
+// guarantees a mismatched row (e.g. analysisType=EOD but metadata.mode=
+// INTRADAY) can never surface under the wrong tab.
+async function getRunForMode(date: Date, mode: Mode) {
+  const filter =
+    mode === "INTRADAY"
+      ? { analysisType: { in: ["INTRADAY"] as any }, metadata: { path: "$.mode", equals: "INTRADAY" } }
+      : { analysisType: { in: ["EOD", "PRE_MARKET"] as any }, metadata: { path: "$.mode", equals: "SWING" } };
+  const run = await prisma.analysisRun.findFirst({
+    where: { tradingDate: date, ...filter },
+    orderBy: { id: "desc" },
+  });
+  // Back-compat: legacy rows written before the mode metadata was introduced
+  // have no metadata.mode (metadata is NULL). For those, fall back to
+  // analysisType so genuinely EOD runs for SWING still resolve, while never
+  // letting an INTRADAY-mode row masquerade as SWING (those carry
+  // metadata.mode=INTRADAY and are already excluded above).
+  if (!run && mode === "SWING") {
+    return prisma.analysisRun.findFirst({
+      where: { tradingDate: date, analysisType: { in: ["EOD", "PRE_MARKET"] as any }, metadata: { equals: Prisma.DbNull } },
+      orderBy: { id: "desc" },
+    });
+  }
+  return run;
+}
+
+function parseRunMetadata(meta: any): { mode?: Mode; marketCondition?: string; marketReason?: string } {
+  if (!meta || typeof meta !== "object") return {};
+  return meta as { mode?: Mode; marketCondition?: string; marketReason?: string };
+}
+
 async function completeness(date: Date) {
   const uploads = await prisma.csvUpload.findMany({
     where: { tradingDate: date, uploadStatus: "PROCESSED" },
@@ -32,14 +76,24 @@ async function completeness(date: Date) {
   });
   const received = new Set(uploads.map((u) => u.reportType));
   const present = REQUIRED_REPORTS.filter((r) => received.has(r as any));
-  return { received: present.length, expected: REQUIRED_REPORTS.length, missing: REQUIRED_REPORTS.filter((r) => !received.has(r as any)), reportTypes: [...received] };
+  // Bhavcopy / daily price data is tracked separately from the 8-report
+  // screening set — it must not inflate the NSE reports count.
+  const priceDataReceived = received.has("BHAVCOPY");
+  return {
+    received: present.length,
+    expected: REQUIRED_REPORTS.length,
+    missing: REQUIRED_REPORTS.filter((r) => !received.has(r as any)),
+    reportTypes: [...received],
+    priceData: priceDataReceived ? 1 : 0,
+    priceDataExpected: 1,
+  };
 }
 
 export const analysisController = {
   run: asyncHandler(async (req: any, res: Response) => {
-    const { tradingDate, analysisType } = req.body ?? {};
+    const { tradingDate, analysisType, mode } = req.body ?? {};
     if (!tradingDate) return res.status(400).json({ error: "tradingDate is required." });
-    const result = await runAnalysis(tradingDate, analysisType ?? "EOD");
+    const result = await runAnalysis(tradingDate, analysisType ?? "EOD", mode);
     res.json(result);
   }),
 
@@ -52,11 +106,34 @@ export const analysisController = {
     const date = new Date(dateStr + "T00:00:00");
     await ensureTradingDay(date);
     const comp = await completeness(date);
-    const run = await getLatestRun(date);
 
     // Optional snapshot version (e.g. from the History page) selects a specific
     // intraday/EOD snapshot's report rows rather than the latest one.
     const snapshotVersion = req.query.snapshot ? Number(req.query.snapshot) : undefined;
+
+    // Decide which analysis type (and therefore which MODE) to surface:
+    //  - while the market is open, show the latest INTRADAY snapshot;
+    //  - after close, show the latest EOD snapshot;
+    //  - when an explicit historical snapshot version is requested, use that
+    //    snapshot's own analysis type;
+    //  - an explicit ?mode= query wins over all of the above.
+    const marketStatus = marketStatusNow();
+    const marketOpen = marketStatus !== "CLOSED";
+    let sectionAnalysisType: "INTRADAY" | "EOD" = marketOpen ? "INTRADAY" : "EOD";
+    if (snapshotVersion !== undefined) {
+      const snapshotUpload = await prisma.csvUpload.findFirst({
+        where: { tradingDate: date, uploadStatus: "PROCESSED", uploadVersion: snapshotVersion },
+        orderBy: { id: "asc" },
+      });
+      if (snapshotUpload) sectionAnalysisType = snapshotUpload.analysisType === "EOD" ? "EOD" : "INTRADAY";
+    }
+    const mode: Mode =
+      req.query.mode === "INTRADAY" || req.query.mode === "SWING"
+        ? (req.query.mode as Mode)
+        : modeFromAnalysisType(sectionAnalysisType);
+
+    const run = await getRunForMode(date, mode);
+    const runMeta = parseRunMetadata(run?.metadata);
 
     let scores: any[] = [];
     let setupMap = new Map<number, any>();
@@ -77,32 +154,19 @@ export const analysisController = {
         symbol: s.stock.symbol,
         company: s.stock.companyName,
         score: s.normalizedScore,
+        explainableScore: st?.explainableScore ?? null,
         classification: s.classification,
-        changePercent: s.stock ? undefined : undefined,
+        changePercent: undefined,
         ltp: st?.currentPrice ?? null,
         status: st?.status ?? null,
+        breakoutLevel: st?.breakoutLevel ?? null,
+        breakoutStatus: st?.breakoutStatus ?? null,
+        riskReward1: st?.riskReward1 ?? null,
+        trend: st?.trend ?? null,
+        whySelected: st?.whySelected ?? [],
         signals: s.signals,
       };
     });
-
-    // Sections — show a single snapshot per report type so that multiple
-    // INTRADAY/EOD uploads for the same trading date are never combined.
-    //
-    // Decide which analysis type to surface:
-    //  - while the market is open, show the latest INTRADAY snapshot;
-    //  - after close, show the latest EOD snapshot;
-    //  - when an explicit historical snapshot version is requested, use that
-    //    snapshot's own analysis type.
-    const marketStatus = marketStatusNow();
-    const marketOpen = marketStatus !== "CLOSED";
-    let sectionAnalysisType: "INTRADAY" | "EOD" = marketOpen ? "INTRADAY" : "EOD";
-    if (snapshotVersion !== undefined) {
-      const snapshotUpload = await prisma.csvUpload.findFirst({
-        where: { tradingDate: date, uploadStatus: "PROCESSED", uploadVersion: snapshotVersion },
-        orderBy: { id: "asc" },
-      });
-      if (snapshotUpload) sectionAnalysisType = snapshotUpload.analysisType === "EOD" ? "EOD" : "INTRADAY";
-    }
 
     const latestEntries = await latestUploadPerReportType(date, { version: snapshotVersion, analysisType: sectionAnalysisType });
     let sectionSnapshotCreatedAt: string | null = null;
@@ -139,7 +203,7 @@ export const analysisController = {
     let avoided: any[] = [];
     if (run) {
       const avoidSetups = await prisma.tradeSetup.findMany({ where: { analysisRunId: run.id, status: "AVOID" }, include: { stock: true }, take: 10 });
-      avoided = avoidSetups.map((s) => ({ symbol: s.stock.symbol, reason: s.reason }));
+      avoided = avoidSetups.map((s) => ({ symbol: s.stock.symbol, reason: s.reason, status: s.status }));
     }
 
     const noTrade = run ? watchlist.length === 0 : false;
@@ -149,12 +213,15 @@ export const analysisController = {
         tradingDate: dateStr,
         marketStatus: marketStatus,
         completeness: comp,
+        mode,
         analysisType: run?.analysisType ?? null,
         analysisStatus: run?.status ?? null,
+        marketCondition: runMeta.marketCondition ?? null,
+        marketReason: runMeta.marketReason ?? null,
         sectionAnalysisType,
         sectionSnapshotVersion: latestEntries[0]?.version ?? null,
         sectionSnapshotCreatedAt,
-        nextTradingDate: run?.id ? (await prisma.dailyWatchlist.findUnique({ where: { analysisRunId: run.id } }))?.nextTradingDate?.toISOString().slice(0, 10) : null,
+        nextTradingDate: run ? toDateString(nextBusinessDay(run.tradingDate)) : null,
         topCandidates,
         sections: {
           mostActiveVolume: maVol,
@@ -184,8 +251,10 @@ export const analysisController = {
     const dateStr = (req.query.date as string) || toDateString(new Date());
     const date = new Date(dateStr + "T00:00:00");
     const limit = Number(req.query.limit) || 100;
-    const run = await getLatestRun(date);
-    if (!run) return res.json({ tradingDate: dateStr, candidates: [] });
+    const mode: Mode =
+      req.query.mode === "INTRADAY" || req.query.mode === "SWING" ? (req.query.mode as Mode) : "SWING";
+    const run = await getRunForMode(date, mode);
+    if (!run) return res.json({ tradingDate: dateStr, mode, runStatus: null, candidates: [] });
     const scores = await prisma.dailyStockScore.findMany({
       where: { analysisRunId: run.id },
       include: { stock: true },
@@ -204,6 +273,7 @@ export const analysisController = {
         symbol: s.stock.symbol,
         company: s.stock.companyName,
         score: s.normalizedScore,
+        explainableScore: st?.explainableScore ?? null,
         classification: s.classification,
         changePercent: m?.changePercent ?? null,
         ltp: st?.currentPrice ?? m?.ltp ?? null,
@@ -211,20 +281,29 @@ export const analysisController = {
         turnover: m?.turnover ?? null,
         is52wHigh: m?.is52wHigh ?? false,
         status: st?.status ?? null,
+        breakoutLevel: st?.breakoutLevel ?? null,
+        breakoutStatus: st?.breakoutStatus ?? null,
+        breakoutReason: st?.breakoutReason ?? null,
+        stopLossReason: st?.stopLossReason ?? null,
+        riskReward1: st?.riskReward1 ?? null,
+        trend: st?.trend ?? null,
+        whySelected: st?.whySelected ?? [],
         signals: s.signals,
         setup: st,
       };
     });
-    res.json(toPlain({ tradingDate: dateStr, candidates }));
+    res.json(toPlain({ tradingDate: dateStr, mode, runStatus: run.status, runId: run.id, candidates }));
   }),
 
   candidateDetail: asyncHandler(async (req: any, res: Response) => {
     const symbol = (req.params.symbol as string).toUpperCase();
     const dateStr = (req.query.date as string) || toDateString(new Date());
     const date = new Date(dateStr + "T00:00:00");
+    const mode: Mode =
+      req.query.mode === "INTRADAY" || req.query.mode === "SWING" ? (req.query.mode as Mode) : "SWING";
     const stock = await prisma.stock.findUnique({ where: { symbol } });
     if (!stock) return res.status(404).json({ error: "Stock not found." });
-    const run = await getLatestRun(date);
+    const run = await getRunForMode(date, mode);
     const metric = await prisma.dailyStockMetric.findUnique({ where: { tradingDate_stockId: { tradingDate: date, stockId: stock.id } } });
     let score = null;
     let setup = null;
@@ -232,6 +311,13 @@ export const analysisController = {
       score = await prisma.dailyStockScore.findFirst({ where: { analysisRunId: run.id, stockId: stock.id } });
       setup = await prisma.tradeSetup.findFirst({ where: { analysisRunId: run.id, stockId: stock.id } });
     }
+    // Bhavcopy history for the technical chart / indicator context.
+    const priceBars = await prisma.dailyPriceBar.findMany({
+      where: { stockId: stock.id },
+      orderBy: { tradingDate: "desc" },
+      take: 60,
+      select: { tradingDate: true, openPrice: true, highPrice: true, lowPrice: true, closePrice: true, tradedQty: true },
+    });
     // Source records
     const sources = {
       mostActiveVolume: await prisma.mostActiveVolume.findFirst({ where: { tradingDate: date, stockId: stock.id } }),
@@ -243,16 +329,18 @@ export const analysisController = {
       topLoser: await prisma.topLoser.findFirst({ where: { tradingDate: date, stockId: stock.id } }),
       largeDeals: await prisma.largeDeal.findMany({ where: { tradingDate: date, stockId: stock.id }, take: 50 }),
     };
-    res.json(toPlain({ symbol, stock, metric, score, setup, sources }));
+    res.json(toPlain({ symbol, stock, metric, score, setup, sources, priceBars }));
   }),
 
   watchlist: asyncHandler(async (req: any, res: Response) => {
     const dateStr = (req.query.date as string) || toDateString(new Date());
     const date = new Date(dateStr + "T00:00:00");
-    const run = await getLatestRun(date);
-    if (!run) return res.json({ tradingDate: dateStr, watchlist: null });
+    const mode: Mode =
+      req.query.mode === "INTRADAY" || req.query.mode === "SWING" ? (req.query.mode as Mode) : "SWING";
+    const run = await getRunForMode(date, mode);
+    if (!run) return res.json({ tradingDate: dateStr, mode, runStatus: null, watchlist: null });
     const wl = await prisma.dailyWatchlist.findUnique({ where: { analysisRunId: run.id }, include: { items: { include: { stock: true, tradeSetup: true }, orderBy: { rank: "asc" } } } });
-    res.json(toPlain({ tradingDate: dateStr, watchlist: wl }));
+    res.json(toPlain({ tradingDate: dateStr, mode, runStatus: run.status, runId: run.id, watchlist: wl }));
   }),
 
   history: asyncHandler(async (_req: any, res: Response) => {
@@ -272,6 +360,7 @@ export const analysisController = {
         return {
           version: s.version,
           analysisType: s.analysisType,
+          mode: modeFromAnalysisType(s.analysisType),
           createdAt: s.createdAtISO,
           reportCount: s.reportCount,
           reportTypes: s.reportTypes,
@@ -285,6 +374,7 @@ export const analysisController = {
           })),
           analysisStatus: run?.status ?? null,
           stocksAnalyzed: run?.stocksAnalyzed ?? 0,
+          marketCondition: parseRunMetadata(run?.metadata).marketCondition ?? null,
           topCandidate: null,
         };
       });
@@ -311,6 +401,16 @@ export const analysisController = {
       });
     }
     res.json(toPlain({ history: out }));
+  }),
+
+  chart: asyncHandler(async (req: any, res: Response) => {
+    const symbol = (req.params.symbol as string).toUpperCase();
+    const mode: Mode =
+      req.query.mode === "INTRADAY" || req.query.mode === "SWING" ? (req.query.mode as Mode) : "SWING";
+    const range = (["3M", "6M", "MAX"].includes(req.query.range) ? req.query.range : "6M") as ChartRange;
+    const chart = await getDailyChart(symbol, { range, mode });
+    if (!chart) return res.status(404).json({ error: "Stock not found." });
+    res.json(toPlain(chart));
   }),
 
   stockHistory: asyncHandler(async (req: any, res: Response) => {

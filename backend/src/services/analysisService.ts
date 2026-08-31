@@ -1,8 +1,11 @@
 import { prisma } from "../prisma.js";
-import { AnalysisType, AnalysisStatus, SetupStatus } from "@prisma/client";
+import { AnalysisType, AnalysisStatus } from "@prisma/client";
 import { computeSignals } from "../analysis/signals.js";
-import { computeTradeSetup } from "../analysis/setup.js";
-import { MetricInput } from "../analysis/types.js";
+import { MetricInput, TradeSetupResult } from "../analysis/types.js";
+import { computeIndicators, TechnicalIndicators } from "../analysis/technical.js";
+import { computeStructure, StructureDecision } from "../analysis/structure.js";
+import { classifyMarket, MarketCondition } from "../analysis/market.js";
+import { computeExplainableScore } from "../analysis/scoring.js";
 import { getSettings } from "../repositories/settings.js";
 import {
   createAnalysisRun,
@@ -12,13 +15,30 @@ import {
   insertSetup,
   createWatchlist,
 } from "../repositories/analysis.js";
+import { loadPriceBarsForStockIds, loadPriceBarsForSymbols } from "../repositories/priceHistory.js";
 import { ensureTradingDay } from "../repositories/metrics.js";
 import { REQUIRED_REPORTS } from "../config/index.js";
 import { toDateString } from "../utils/date.js";
 
-const ACTIONABLE: string[] = ["BUY_SETUP", "WAIT_FOR_BREAKOUT", "WAIT_FOR_PULLBACK", "WATCH"];
+// Two-mode system:
+//   - EOD / PRE_MARKET  => SWING mode  (NEXT SESSION SWING ANALYSIS)
+//   - INTRADAY          => INTRADAY mode (TODAY'S INTRADAY ANALYSIS)
+function modeForAnalysisType(t: string): "INTRADAY" | "SWING" {
+  return t === "INTRADAY" ? "INTRADAY" : "SWING";
+}
 
-function nextBusinessDay(date: Date): Date {
+const INDEX_SYMBOLS = ["NIFTY", "NIFTY50", "NIFTY 50", "BANKNIFTY", "BANK NIFTY", "FINNIFTY", "SENSEX", "NIFTYMID50"];
+
+// Conservative actionable statuses -> these make the trade watchlist.
+// MISSED (chase), AVOID, WEAK_BREAKOUT, NO_TRADE, INSUFFICIENT_DATA are excluded.
+const ACTIONABLE: string[] = [
+  "ENTRY_ACTIVE",
+  "BREAKOUT_CONFIRMED",
+  "BREAKOUT_APPROACHING",
+  "WAIT_FOR_BREAKOUT",
+];
+
+export function nextBusinessDay(date: Date): Date {
   const d = new Date(date);
   do {
     d.setDate(d.getDate() + 1);
@@ -32,16 +52,19 @@ export interface RunAnalysisResult {
   tradingDate: string;
   nextTradingDate: string;
   analysisType: string;
+  mode: "INTRADAY" | "SWING";
   status: string;
   stocksAnalyzed: number;
   filesReceived: number;
   filesExpected: number;
   watchlistSize: number;
+  marketCondition: MarketCondition | null;
 }
 
 export async function runAnalysis(
   tradingDateInput: string,
-  analysisType: "EOD" | "PRE_MARKET" | "INTRADAY" = "EOD"
+  analysisType: "EOD" | "PRE_MARKET" | "INTRADAY" = "EOD",
+  modeOverride?: "INTRADAY" | "SWING"
 ): Promise<RunAnalysisResult> {
   const tradingDate = new Date(tradingDateInput + "T00:00:00");
   if (isNaN(tradingDate.getTime())) throw new Error("Invalid trading date");
@@ -56,6 +79,7 @@ export async function runAnalysis(
   const filesExpected = REQUIRED_REPORTS.length;
   const complete = filesReceived >= filesExpected;
 
+  const mode = modeOverride ?? modeForAnalysisType(analysisType);
   const typeEnum: AnalysisType =
     analysisType === "INTRADAY"
       ? AnalysisType.INTRADAY
@@ -63,17 +87,34 @@ export async function runAnalysis(
       ? AnalysisType.PRE_MARKET
       : AnalysisType.EOD;
 
+  // Data-integrity guard: the analysis type and the computation mode must
+  // agree. An INTRADAY analysis must never be persisted under an EOD/SWING
+  // type (and vice-versa), otherwise it would be mis-surfaced under the
+  // wrong tab. Reject the save rather than silently correcting it.
+  const modeByType = analysisType === "INTRADAY" ? "INTRADAY" : "SWING";
+  if (mode !== modeByType) {
+    throw new Error(
+      `Analysis mode/type mismatch: cannot save ${modeByType === "INTRADAY" ? "INTRADAY" : "SWING/EOD"} analysis as ${analysisType}. ` +
+        `Resolved mode was "${mode}", but analysisType "${analysisType}" requires mode "${modeByType}".`
+    );
+  }
+
   const run = await createAnalysisRun({ tradingDate, analysisType: typeEnum, filesExpected, filesReceived });
 
   try {
     const settings = await getSettings();
+    const setupSettings = {
+      capital: settings.capital,
+      riskPercent: settings.riskPercent,
+      minRiskReward: settings.minRiskReward,
+    };
 
     const metrics = await prisma.dailyStockMetric.findMany({
       where: { tradingDate },
       include: { stock: true },
     });
 
-    // Previous trading day metrics for technical levels (breakout/stop)
+    // Previous trading day metrics for technical levels (breakout/stop fallback)
     const prevMeta = await prisma.dailyStockMetric.findFirst({
       where: { tradingDate: { lt: tradingDate } },
       orderBy: { tradingDate: "desc" },
@@ -85,17 +126,49 @@ export async function runAnalysis(
       for (const pm of prevMetrics) prevMap.set(pm.stockId, pm);
     }
 
+    // ---- Market condition (index-backed when available, else breadth proxy) --
+    const indexBarsBySymbol = await loadPriceBarsForSymbols(INDEX_SYMBOLS);
+    const indexSubset = Array.from(indexBarsBySymbol.entries()).map(([sym, bars]) => {
+      const tech = computeIndicators(bars);
+      return {
+        symbol: sym,
+        return20d: tech.return20d,
+        return5d: tech.return5d,
+        above20dma: tech.sma20 != null ? bars[bars.length - 1].close > tech.sma20 : null,
+      };
+    });
+    const advancers = metrics.filter((m) => m.changePercent != null && Number(m.changePercent) > 0).length;
+    const decliners = metrics.filter((m) => m.changePercent != null && Number(m.changePercent) <= 0).length;
+    const week52High = metrics.filter((m) => m.is52wHigh).length;
+    const week52Low = metrics.filter((m) => m.is52wLow).length;
+    const market = classifyMarket({
+      indexSubset: indexSubset.length > 0 ? indexSubset : null,
+      advancers,
+      decliners,
+      week52High,
+      week52Low,
+    });
+
+    // ---- Bhavcopy history for all stocks in this run ----------------------
+    const stockIds = metrics.map((m) => m.stockId);
+    const barsByStock = await loadPriceBarsForStockIds(stockIds);
+
     const entries: {
       stockId: number;
       symbol: string;
       companyName: string | null;
       score: ReturnType<typeof computeSignals>;
-      setup: ReturnType<typeof computeTradeSetup>;
+      setup: StructureDecision;
+      tech: TechnicalIndicators | null;
+      explainable: { total: number; components: { key: string; label: string; score: number; max: number; reason: string }[] };
     }[] = [];
 
     let warningCount = 0;
     for (const m of metrics) {
       const prev = prevMap.get(m.stockId);
+      const bars = barsByStock.get(m.stockId) ?? [];
+      const tech = bars.length > 0 ? computeIndicators(bars) : null;
+
       const input: MetricInput = {
         stockId: m.stockId,
         symbol: m.stock.symbol,
@@ -124,20 +197,36 @@ export async function runAnalysis(
         prevHighPrice: prev?.highPrice != null ? Number(prev.highPrice) : null,
         prevLowPrice: prev?.lowPrice != null ? Number(prev.lowPrice) : null,
         prevClose: prev?.previousClose != null ? Number(prev.previousClose) : null,
+        breakoutLevel: tech?.breakoutLevel ?? null,
+        breakoutReason: tech?.breakoutReason ?? null,
+        marketCondition: market.condition,
       };
+
       const score = computeSignals(input);
-      const setup = computeTradeSetup(input, score, {
-        capital: settings.capital,
-        riskPercent: settings.riskPercent,
-        minRiskReward: settings.minRiskReward,
+      const setup = computeStructure({
+        metric: input,
+        score,
+        tech,
+        marketCondition: market.condition,
+        mode,
+        settings: setupSettings,
       });
-      if (score.warnings.length > 0) warningCount += score.warnings.length;
-      entries.push({ stockId: m.stockId, symbol: m.stock.symbol, companyName: m.stock.companyName, score, setup });
+      const explainable = computeExplainableScore({
+        mode,
+        metric: input,
+        tech,
+        marketCondition: market.condition,
+        setup: setup as unknown as TradeSetupResult,
+        dataQuality: tech ? Math.min(1, tech.availableDays / 60) : 0,
+      });
+      warningCount += score.warnings.length + explainable.warnings.length;
+      entries.push({ stockId: m.stockId, symbol: m.stock.symbol, companyName: m.stock.companyName, score, setup, tech, explainable });
     }
 
-    // Rank by normalized score desc, then turnover
+    // Rank by transparent explainable score desc, then legacy score, then turnover.
     entries.sort((a, b) => {
-      if (b.score.normalizedScore !== a.score.normalizedScore) return b.score.normalizedScore - a.score.normalizedScore;
+      if (b.explainable.total !== a.explainable.total) return b.explainable.total - a.explainable.total;
+      if (b.score.normalizedScore !== a.score.normalizedScore) return Number(b.score.normalizedScore) - Number(a.score.normalizedScore);
       const ta = metrics.find((m) => m.stockId === a.stockId)?.turnover ?? 0;
       const tb = metrics.find((m) => m.stockId === b.stockId)?.turnover ?? 0;
       return Number(tb) - Number(ta);
@@ -150,11 +239,37 @@ export async function runAnalysis(
       const e = entries[i];
       const rank = i + 1;
       await insertScore({ runId: run.id, tradingDate, stockId: e.stockId, score: e.score, rank });
-      const setupRec = await insertSetup({ runId: run.id, tradingDate, stockId: e.stockId, setup: e.setup });
+      const setupRec = await insertSetup({
+        runId: run.id,
+        tradingDate,
+        stockId: e.stockId,
+        setup: e.setup as unknown as TradeSetupResult,
+        mode,
+        explainable: e.explainable,
+        technicalContext: e.tech
+          ? {
+              availableDays: e.tech.availableDays,
+              sma20: e.tech.sma20,
+              sma50: e.tech.sma50,
+              sma200: e.tech.sma200,
+              rsi14: e.tech.rsi14,
+              atr14: e.tech.atr14,
+              relVolume: e.tech.relVolume,
+              high20: e.tech.high20,
+              low20: e.tech.low20,
+              high50: e.tech.high50,
+              low50: e.tech.low50,
+              breakoutLevel: e.tech.breakoutLevel,
+              breakoutReason: e.tech.breakoutReason,
+              trend: e.tech.trend,
+              trendReasons: e.tech.trendReasons,
+            }
+          : null,
+      });
       setupIdByStock.set(e.stockId, setupRec.id);
     }
 
-    // Build watchlist from actionable candidates
+    // Build watchlist from conservative actionable candidates.
     const actionable = entries
       .filter((e) => ACTIONABLE.includes(e.setup.status))
       .slice(0, settings.maxWatchlistSize);
@@ -166,7 +281,7 @@ export async function runAnalysis(
       items: actionable.map((e, idx) => ({
         stockId: e.stockId,
         rank: idx + 1,
-        score: e.score.normalizedScore,
+        score: e.explainable.total,
         status: e.setup.status,
         tradeSetupId: setupIdByStock.get(e.stockId) ?? null,
         reason: e.setup.reason ?? "",
@@ -181,16 +296,24 @@ export async function runAnalysis(
       errorMessage: complete ? null : `Only ${filesReceived}/${filesExpected} reports available. Partial analysis.`,
     });
 
+    // Record market condition + mode on the run for the UI.
+    await prisma.analysisRun.update({
+      where: { id: run.id },
+      data: { metadata: { mode, marketCondition: market.condition, marketReason: market.reason } as any },
+    });
+
     return {
       runId: run.id,
       tradingDate: toDateString(tradingDate),
       nextTradingDate: toDateString(nextTradingDate),
       analysisType,
+      mode,
       status: complete ? "COMPLETED" : "PARTIAL",
       stocksAnalyzed: entries.length,
       filesReceived,
       filesExpected,
       watchlistSize: actionable.length,
+      marketCondition: market.condition,
     };
   } catch (err: any) {
     await finalizeAnalysisRun(run.id, {

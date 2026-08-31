@@ -1,26 +1,29 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api } from "../services/api";
+import { api, type Mode } from "../services/api";
 import { todayISO, fmtPct, fmtCurrency, fmtVol } from "../utils";
 import ScoreBadge from "../components/ScoreBadge";
 import StatusBadge from "../components/StatusBadge";
-import { BarChart3, ArrowUpRight, Clock, AlertTriangle, FileCheck, List, Eye } from "lucide-react";
+import ModeToggle, { MODE_LABEL } from "../components/ModeToggle";
+import { BarChart3, ArrowUpRight, Clock, AlertTriangle, FileCheck, List, Eye, TrendingDown, TrendingUp } from "lucide-react";
 
 export default function Dashboard() {
   const [searchParams] = useSearchParams();
   const urlDate = searchParams.get("date") ?? undefined;
   const urlSnapshot = searchParams.get("snapshot") ? Number(searchParams.get("snapshot")) : undefined;
+  const urlMode = searchParams.get("mode") === "INTRADAY" ? "INTRADAY" : "SWING";
   const [date, setDate] = useState(urlDate ?? todayISO());
   const [snapshot, setSnapshot] = useState<number | undefined>(urlSnapshot);
+  const [mode, setMode] = useState<Mode>(urlMode);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const load = async (d: string, snap?: number) => {
+  const load = async (d: string, snap?: number, m?: Mode) => {
     setLoading(true);
     setError("");
     try {
-      const res = await api.dashboard(d, snap);
+      const res = await api.dashboard(d, snap, m);
       setData(res);
       if (res.tradingDate) setDate(res.tradingDate);
     } catch (e: any) {
@@ -31,9 +34,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     setSnapshot(urlSnapshot);
-    load(urlDate ?? date, urlSnapshot);
+    load(urlDate ?? date, urlSnapshot, mode);
     // eslint-disable-line react-hooks/exhaustive-deps
-  }, [urlDate, urlSnapshot]);
+  }, [urlDate, urlSnapshot, mode]);
 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto">
@@ -47,9 +50,28 @@ export default function Dashboard() {
           <p className="text-gray-500 text-sm mt-1">Analytical decision-support tool. Market returns not guaranteed.</p>
         </div>
         <div className="flex items-center gap-3">
-          <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setSnapshot(undefined); load(e.target.value); }} className="input" />
+          <ModeToggle mode={mode} onChange={(m) => { setMode(m); setSnapshot(undefined); load(date, undefined, m); }} />
+          <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setSnapshot(undefined); load(e.target.value, undefined, mode); }} className="input" />
         </div>
       </div>
+
+      {data?.mode && (
+        <div className="card flex items-center justify-between px-4 py-3">
+          <span className="text-sm font-bold text-emerald-300">{MODE_LABEL[data.mode as Mode] ?? data.mode}</span>
+          <div className="flex items-center gap-4 text-sm">
+            {data.marketCondition && (
+              <span className={`flex items-center gap-1.5 font-semibold ${
+                data.marketCondition === "BULLISH" ? "text-emerald-400" :
+                data.marketCondition === "BEARISH" ? "text-red-400" : "text-amber-400"
+              }`}>
+                {data.marketCondition === "BULLISH" ? <TrendingUp size={15} /> : data.marketCondition === "BEARISH" ? <TrendingDown size={15} /> : <Clock size={15} />}
+                Market: {data.marketCondition}
+              </span>
+            )}
+            {data.analysisType && <span className="text-gray-500 text-xs">{data.analysisType}</span>}
+          </div>
+        </div>
+      )}
 
       {snapshot !== undefined && (
         <div className="card bg-amber-900/10 border-amber-700/30 text-amber-300 text-sm flex items-center gap-2">
@@ -80,6 +102,13 @@ export default function Dashboard() {
               <div>
                 <p className="text-[10px] uppercase text-gray-500">Reports</p>
                 <p className="font-bold text-sm">{data.completeness.received}/{data.completeness.expected}</p>
+                {data.completeness.priceData != null && (
+                  <p className="text-[10px] text-gray-500 mt-0.5">
+                    <span className={data.completeness.priceData > 0 ? "text-emerald-500" : "text-gray-600"}>
+                      Price: {data.completeness.priceData}/{data.completeness.priceDataExpected}
+                    </span>
+                  </p>
+                )}
               </div>
             </div>
             <div className="card flex items-center gap-3">
@@ -102,7 +131,7 @@ export default function Dashboard() {
           <section>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-bold text-gray-100">Top Candidates</h2>
-              <Link to="/candidates" className="text-emerald-400 hover:text-emerald-300 text-sm flex items-center gap-1">
+              <Link to={`/candidates?date=${date}&mode=${mode}`} className="text-emerald-400 hover:text-emerald-300 text-sm flex items-center gap-1">
                 View all <ArrowUpRight size={14} />
               </Link>
             </div>
@@ -116,10 +145,11 @@ export default function Dashboard() {
                       <th className="pb-2 pr-4">#</th>
                       <th className="pb-2 pr-4">Symbol</th>
                       <th className="pb-2 pr-4">Score</th>
-                      <th className="pb-2 pr-4">Classification</th>
+                      <th className="pb-2 pr-4">Trend</th>
                       <th className="pb-2 pr-4">Status</th>
+                      <th className="pb-2 pr-4">Breakout</th>
                       <th className="pb-2 pr-4 text-right">LTP</th>
-                      <th className="pb-2 text-right">Signals</th>
+                      <th className="pb-2 text-right">R:R</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -127,17 +157,34 @@ export default function Dashboard() {
                       <tr key={c.symbol} className="table-row">
                         <td className="py-2.5 pr-4 text-gray-500">{i + 1}</td>
                         <td className="py-2.5 pr-4">
-                          <Link to={`/candidates/${c.symbol}`} className="font-semibold text-gray-100 hover:text-emerald-400 transition-colors">
+                          <Link to={`/candidates/${c.symbol}${date ? `?date=${date}` : ""}${mode ? `&mode=${mode}` : ""}`} className="font-semibold text-gray-100 hover:text-emerald-400 transition-colors">
                             {c.symbol}
                           </Link>
                           <span className="text-gray-500 text-xs ml-2">{c.company}</span>
                         </td>
-                        <td className="py-2.5 pr-4"><ScoreBadge score={c.score} classification={c.classification} /></td>
-                        <td className="py-2.5 pr-4 text-xs text-gray-400">{c.classification?.replace("_", "+")}</td>
+                        <td className="py-2.5 pr-4">
+                          <ScoreBadge score={c.score} classification={c.classification} />
+                          {c.explainableScore != null && (
+                            <span className="block text-[9px] text-gray-500 mt-0.5">exp. {Number(c.explainableScore).toFixed(1)}</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 pr-4">
+                          <span className={`text-xs font-bold uppercase ${
+                            c.trend === "BULLISH" ? "text-emerald-400" : c.trend === "BEARISH" ? "text-red-400" : "text-gray-400"
+                          }`}>{c.trend ?? "—"}</span>
+                        </td>
                         <td className="py-2.5 pr-4"><StatusBadge status={c.status} /></td>
+                        <td className="py-2.5 pr-4 text-xs text-gray-400">
+                          {c.breakoutLevel ? (
+                            <>
+                              <span className="text-gray-300 font-semibold">{fmtCurrency(c.breakoutLevel)}</span>
+                              {c.breakoutStatus && <span className="block text-[10px] text-gray-500">{c.breakoutStatus}</span>}
+                            </>
+                          ) : "—"}
+                        </td>
                         <td className="py-2.5 pr-4 text-right font-mono">{fmtCurrency(c.ltp)}</td>
-                        <td className="py-2.5 text-right text-xs text-gray-400">
-                          {(c.signals ?? []).filter((s: any) => s.points > 0).length} signals
+                        <td className="py-2.5 text-right font-mono text-xs text-gray-400">
+                          {c.riskReward1 != null ? `1:${Number(c.riskReward1).toFixed(1)}` : "—"}
                         </td>
                       </tr>
                     ))}
@@ -230,22 +277,30 @@ export default function Dashboard() {
             <section>
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-bold text-gray-100">Next Session Watchlist</h2>
-                <Link to="/watchlist" className="text-emerald-400 hover:text-emerald-300 text-sm flex items-center gap-1">
+                <Link to={`/watchlist?date=${date}&mode=${mode}`} className="text-emerald-400 hover:text-emerald-300 text-sm flex items-center gap-1">
                   Full watchlist <ArrowUpRight size={14} />
                 </Link>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {data.watchlist.map((w: any) => (
-                  <Link key={w.rank} to={`/candidates/${w.symbol}`} className="card hover:border-emerald-600/50 transition-colors group">
+                  <Link key={w.rank} to={`/candidates/${w.symbol}?date=${date}&mode=${mode}`} className="card hover:border-emerald-600/50 transition-colors group">
                     <div className="flex justify-between items-start">
                       <div>
                         <span className="text-gray-500 text-xs">#{w.rank}</span>
                         <span className="font-bold text-gray-100 ml-2 group-hover:text-emerald-400">{w.symbol}</span>
                       </div>
-                      <StatusBadge status={w.status} />
+                      <div className="flex items-center gap-2">
+                        {w.setup?.trend && (
+                          <span className={`text-[9px] font-bold uppercase ${w.setup.trend === "BULLISH" ? "text-emerald-400" : w.setup.trend === "BEARISH" ? "text-red-400" : "text-gray-400"}`}>
+                            {w.setup.trend}
+                          </span>
+                        )}
+                        <StatusBadge status={w.status} />
+                      </div>
                     </div>
                     {w.setup && (
                       <div className="mt-3 space-y-1 text-xs">
+                        <div className="flex justify-between text-gray-400"><span>Breakout</span><span className="text-gray-200">{w.setup.breakoutLevel ? fmtCurrency(w.setup.breakoutLevel) : "—"}</span></div>
                         <div className="flex justify-between text-gray-400"><span>Entry</span><span>{fmtCurrency(w.setup.entryLow)}–{fmtCurrency(w.setup.entryHigh)}</span></div>
                         <div className="flex justify-between text-gray-400"><span>Stop</span><span className="text-red-400">{fmtCurrency(w.setup.stopLoss)}</span></div>
                         <div className="flex justify-between text-gray-400"><span>Target 1</span><span className="text-emerald-400">{fmtCurrency(w.setup.target1)}</span></div>

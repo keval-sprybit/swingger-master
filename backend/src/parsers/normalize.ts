@@ -5,10 +5,17 @@ export interface NormalizedRow {
   symbol: string;
   security?: string;
   series?: string;
+  isin?: string;
   openPrice?: number;
   highPrice?: number;
   lowPrice?: number;
   previousClose?: number;
+  closePrice?: number;
+  lastPrice?: number;
+  vwap?: number;
+  trades?: number;
+  deliveredQty?: bigint;
+  deliverablePct?: number;
   ltp?: number;
   changePercent?: number;
   volume?: bigint;
@@ -144,7 +151,6 @@ export function normalizeWeek52Low(
     raw: row,
   };
 }
-
 export function normalizeLargeDeal(
   row: Record<string, string>,
   colMap: Record<string, string>,
@@ -167,6 +173,46 @@ export function normalizeLargeDeal(
     quantityTraded: toBigInt(get(row, colMap, "qtyTraded")),
     tradePrice: num(get(row, colMap, "tradePrice")),
     remarks: get(row, colMap, "remarks"),
+    raw: row,
+  };
+}
+
+// NSE Bhavcopy (daily price-volume) row. Only fields present in the file are set;
+// anything missing is left undefined (never invented).
+export function normalizeBhavcopy(
+  row: Record<string, string>,
+  colMap: Record<string, string>
+): NormalizedRow {
+  const symbol = (get(row, colMap, "symbol") ?? "").toUpperCase().trim();
+  const volume = toBigInt(get(row, colMap, "volume"));
+  const turnover = num(get(row, colMap, "value"));
+  const prevClose = num(get(row, colMap, "prevClose"));
+  const closePrice = num(get(row, colMap, "close"));
+  const changePercent =
+    prevClose != null && prevClose > 0 && closePrice != null
+      ? ((closePrice - prevClose) / prevClose) * 100
+      : num(get(row, colMap, "chng"));
+  // CM-UDiFF format includes an ISIN column; preserve it when present.
+  const isin = get(row, colMap, "isin");
+  return {
+    symbol,
+    security: get(row, colMap, "security"),
+    series: get(row, colMap, "series"),
+    isin: isin || undefined,
+    openPrice: num(get(row, colMap, "open")),
+    highPrice: num(get(row, colMap, "high")),
+    lowPrice: num(get(row, colMap, "low")),
+    closePrice,
+    lastPrice: num(get(row, colMap, "last")),
+    previousClose: prevClose,
+    ltp: num(get(row, colMap, "ltp")) ?? closePrice,
+    changePercent,
+    volume,
+    turnover,
+    vwap: num(get(row, colMap, "vwap")),
+    trades: num(get(row, colMap, "trades")),
+    deliveredQty: toBigInt(get(row, colMap, "deliveredQty")),
+    deliverablePct: num(get(row, colMap, "deliverablePct")),
     raw: row,
   };
 }

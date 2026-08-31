@@ -1,6 +1,6 @@
 # API Reference
 
-Base URL: `http://localhost:3001/api`
+Base URL: `http://localhost:3000/api`
 
 All responses are JSON. Date parameters use `YYYY-MM-DD` format.
 
@@ -8,9 +8,9 @@ All responses are JSON. Date parameters use `YYYY-MM-DD` format.
 
 ## Upload
 
-### POST `/upload`
+### POST `/uploads`
 
-Upload one or more CSV files. Detects report type, parses, stores, and computes daily metrics.
+Upload one or more CSV files. Detects report type, parses, stores, and computes daily metrics. Standard NSE **Bhavcopy** files (`cm*bhav.csv`) are detected as `BHAVCOPY` and stored as `DailyPriceBar` history (deduplicated per stock/date).
 
 **Request:** `multipart/form-data`
 - `files` — one or more `.csv` files (max 25MB each)
@@ -50,186 +50,167 @@ Upload one or more CSV files. Detects report type, parses, stores, and computes 
 
 ### POST `/analysis/run`
 
-Run the scoring and trade setup engine for a given trading date.
+Run the two-mode scoring and trade-setup engine for a given trading date.
 
 **Request:**
 ```json
 {
-  "tradingDate": "2026-08-27"
+  "tradingDate": "2026-08-27",
+  "analysisType": "EOD",
+  "mode": "SWING"
 }
 ```
+
+- `analysisType`: `EOD` (default, → SWING / next-session), `INTRADAY` (→ TODAY'S INTRADAY ANALYSIS), `PRE_MARKET` (→ SWING).
+- `mode`: optional explicit override `INTRADAY` | `SWING`.
 
 **Response:**
 ```json
 {
   "runId": 1,
   "tradingDate": "2026-08-27",
-  "totalStocks": 20,
-  "scoredStocks": 20,
-  "averageScore": 45.2,
-  "status": "COMPLETED"
+  "nextTradingDate": "2026-08-28",
+  "analysisType": "EOD",
+  "mode": "SWING",
+  "status": "COMPLETED",
+  "stocksAnalyzed": 20,
+  "filesReceived": 8,
+  "filesExpected": 8,
+  "watchlistSize": 5,
+  "marketCondition": "BULLISH"
 }
 ```
 
-### GET `/analysis/dashboard`
+### GET `/dashboard`
 
 Dashboard summary for a trading date.
 
 **Query params:**
 - `date` — YYYY-MM-DD (defaults to most recent)
+- `mode` — `INTRADAY` | `SWING` (defaults to INTRADAY while market open, else SWING)
+- `snapshot` — upload-version snapshot from the History page
 
 **Response:**
 ```json
 {
   "tradingDate": "2026-08-27",
-  "runId": 1,
-  "totalStocks": 20,
-  "scoredStocks": 15,
-  "averageScore": 42.5,
-  "candidates": [
-    {
-      "stockId": 1,
-      "symbol": "RELIANCE",
-      "name": "Reliance Industries Ltd",
-      "normalizedScore": 78,
-      "classification": "B",
-      "status": "BUY_SETUP",
-      "ltp": 2845,
-      "changePercent": 2.34,
-      "volume": 5000000,
-      "turnover": 1400000,
-      "entryLow": 2850,
-      "entryHigh": 2860,
-      "stopLoss": 2790,
-      "target1": 2910,
-      "target2": 2940,
-      "riskReward1": 2.1,
-      "recommendedQuantity": 3,
-      "confidenceScore": 72
-    }
-  ],
-  "watchlist": [],
-  "watchlistStats": {},
-  "sectorBreakdown": {},
-  "totalVolume": 5000000,
-  "totalTurnover": 1400000,
-  "avgTurnover": 70000
-}
-```
-
-### GET `/analysis/candidates`
-
-Sorted candidate list with filtering and pagination.
-
-**Query params:**
-- `date` — YYYY-MM-DD
-- `sort` — `score` (default), `turnover`, `volume`, `change`
-- `order` — `desc` (default), `asc`
-- `search` — symbol search
-- `page` — page number (default 1)
-- `limit` — items per page (default 50)
-
-**Response:**
-```json
-{
-  "date": "2026-08-27",
-  "sort": "score",
-  "order": "desc",
-  "total": 20,
-  "page": 1,
-  "limit": 50,
-  "candidates": [...]
-}
-```
-
-### GET `/analysis/watchlist`
-
-Watchlist for a given date.
-
-**Query params:**
-- `date` — YYYY-MM-DD
-
-**Response:**
-```json
-{
-  "date": "2026-08-27",
-  "total": 10,
-  "watchlist": [
+  "mode": "SWING",
+  "marketCondition": "BULLISH",
+  "analysisStatus": "COMPLETED",
+  "topCandidates": [
     {
       "rank": 1,
-      "stockId": 1,
       "symbol": "RELIANCE",
-      "name": "Reliance Industries Ltd",
-      "normalizedScore": 78,
-      "status": "BUY_SETUP",
+      "score": 78,
+      "explainableScore": 82.4,
+      "classification": "B",
       "ltp": 2845,
-      "changePercent": 2.34,
-      "volume": 5000000,
-      "turnover": 1400000,
-      "entryLow": 2850,
-      "entryHigh": 2860,
-      "stopLoss": 2790,
-      "target1": 2910,
-      "riskReward1": 2.1,
-      "recommendedQuantity": 3,
-      "confidenceScore": 72,
-      "reason": "Confirmed breakout with strong score"
+      "status": "ENTRY ACTIVE",
+      "breakoutLevel": 2850,
+      "breakoutStatus": "BREAKOUT CONFIRMED",
+      "riskReward1": 2.3,
+      "trend": "BULLISH",
+      "whySelected": ["Breakout confirmed", "Good risk/reward (1:2.3)"]
     }
-  ]
+  ],
+  "watchlist": [...],
+  "nextTradingDate": "2026-08-28"
 }
 ```
 
-### GET `/analysis/stock/:stockId/history`
+### GET `/candidates`
 
-Historical data for a stock.
+Sorted candidate list (ranked by explainable score).
 
 **Query params:**
-- `days` — lookback period (default 365)
+- `date` — YYYY-MM-DD
+- `mode` — `INTRADAY` | `SWING` (default `SWING`)
+- `limit` — items per page (default 100)
 
-**Response:**
-```json
+### GET `/candidates/:symbol`
+
+Full detail for one stock: metric, legacy score, structure-based setup (breakout level + reason, stop + reason, targets + reason, position sizing, trend, why-selected), Bhavcopy `priceBars` history.
+
+**Query params:**
+- `date`, `mode`
+
+### GET `/candidates/:symbol/chart`
+
+Chart data for the candlestick / volume / MA price chart on the Candidate Detail page. This is the SOURCE OF TRUTH for what the chart draws — bars come from real stored NSE Bhavcopy (`DailyPriceBar`) and the moving-average series are computed from those same bars (never fabricated). The analysis levels (breakout, entry, stop, targets, support, resistance) come from the stored `TradeSetup` so the chart always agrees with the analysis page.
+
+**Query params:**
+- `mode` — `INTRADAY` | `SWING` (default `SWING`). In `INTRADAY` mode the app returns the daily EOD bars clearly labelled `EOD` with `intradayAvailable: false`, because the application stores daily bars, not candle-by-candle intraday data.
+- `range` — `3M` | `6M` | `MAX` (default `6M`).
+
+**Response shape:**
+```jsonc
 {
-  "stockId": 1,
   "symbol": "RELIANCE",
-  "name": "Reliance Industries Ltd",
-  "history": [
-    {
-      "tradingDate": "2026-08-27",
-      "ltp": 2845,
-      "changePercent": 2.34,
-      "open": 2800,
-      "high": 2850,
-      "low": 2790,
-      "volume": 5000000,
-      "turnover": 1400000,
-      "volumeRatio1w": 5.2,
-      "closePosition": 0.8,
-      "normalizedScore": 78,
-      "classification": "B",
-      "status": "BUY_SETUP"
-    }
-  ]
+  "tradingDate": "2026-08-27",
+  "dataType": "EOD",
+  "dataTime": null,
+  "bars": [ { "tradingDate": "...", "open": 1284.9, "high": 1291.8, "low": 1280, "close": 1287, "volume": 6830228, "sma20": null, "sma50": null, "sma200": null } ],
+  "availableDays": 1,
+  "indicators": { "sma20": null, "sma50": null, "sma200": null, "rsi14": null, "atr14": null, "relVolume": null, "trend": "NEUTRAL", "support": null, "resistance": null },
+  "levels": { "currentPrice": 3055, "breakout": 3060, "entryLow": 3075.3, "entryHigh": 3090.6, "stopLoss": 1287, "target1": 3259.818, "target2": 5942.268, "riskReward1": 0.1 },
+  "status": "AVOID",
+  "breakoutStatus": null,
+  "insufficientData": false,
+  "intradayAvailable": false
 }
 ```
+`null` indicators mean **INSUFFICIENT DATA** (e.g. fewer than 20/50/200 bars) — they are never filled with invented values.
 
-### GET `/analysis/history`
 
-List of all trading days with analysis runs.
+
+Watchlist for a given date (actionable, conservative statuses only).
+
+**Query params:**
+- `date`, `mode`
+
+### GET `/history`
+
+List of trading days with snapshots; each snapshot exposes `mode` and `marketCondition`.
+
+### GET `/stocks/:symbol/history`
+
+Per-stock score/metric history.
+
+---
+
+## Backtesting
+
+### POST `/backtest`
+
+Simulate stored setups across a date range with strict no-look-ahead (only `ENTRY ACTIVE`/`BREAKOUT CONFIRMED` setups become trades; exit always resolves intrabar stop-first).
+
+**Request:**
+```json
+{
+  "from": "2026-08-01",
+  "to": "2026-08-27",
+  "mode": "SWING",
+  "label": "Aug swing"
+}
+```
 
 **Response:**
 ```json
 {
-  "days": [
-    {
-      "tradingDate": "2026-08-27",
-      "runId": 1,
-      "totalStocks": 20,
-      "averageScore": 42.5,
-      "completedAt": "2026-08-27T18:30:00Z"
-    }
-  ]
+  "runId": 3,
+  "mode": "SWING",
+  "metrics": { "totalTrades": 12, "wins": 7, "losses": 4, "open": 1, "winRate": 63.6, "profitFactor": 1.8, "netPnlPct": 4.2, "maxDrawdownPct": 1.9, "avgHoldingDays": 6.1 },
+  "trades": [...]
 }
 ```
+
+### GET `/backtest`
+
+List recent backtest runs.
+
+### GET `/backtest/:id`
+
+Full run including trades (WIN/LOSS/OPEN, exit reason, MFE/MAE %, P&L %).
 
 ---
 

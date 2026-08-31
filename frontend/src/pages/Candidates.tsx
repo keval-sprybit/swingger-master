@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api } from "../services/api";
+import { Link, useSearchParams } from "react-router-dom";
+import { api, type Mode } from "../services/api";
 import { todayISO, fmt, fmtPct, fmtCurrency } from "../utils";
 import ScoreBadge from "../components/ScoreBadge";
 import StatusBadge from "../components/StatusBadge";
+import ModeToggle from "../components/ModeToggle";
 import { List, Search, Play, Loader2 } from "lucide-react";
 
 export default function Candidates() {
-  const [date, setDate] = useState(todayISO());
+  const [searchParams] = useSearchParams();
+  const urlMode: Mode = searchParams.get("mode") === "INTRADAY" ? "INTRADAY" : "SWING";
+  const urlDate = searchParams.get("date") ?? todayISO();
+  const [date, setDate] = useState(urlDate);
+  const [mode, setMode] = useState<Mode>(urlMode);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -15,19 +20,19 @@ export default function Candidates() {
   const [sortKey, setSortKey] = useState("rank");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  const load = async (d: string) => {
+  const load = async (d: string, m: Mode) => {
     setLoading(true);
-    try { setData(await api.candidates(d, 200)); } catch {}
+    try { setData(await api.candidates(d, 200, m)); } catch {}
     setLoading(false);
   };
 
-  useEffect(() => { load(date); }, [date]);
+  useEffect(() => { load(date, mode); }, [date, mode]);
 
   const runAnalysis = async () => {
     setRunning(true);
     try {
-      await api.runAnalysis(date, "EOD");
-      await load(date);
+      await api.runAnalysis(date, mode === "INTRADAY" ? "INTRADAY" : "EOD", mode);
+      await load(date, mode);
     } catch {}
     setRunning(false);
   };
@@ -70,10 +75,11 @@ export default function Candidates() {
           Stock Candidates
         </h1>
         <div className="flex items-center gap-3">
+          <ModeToggle mode={mode} onChange={(m) => { setMode(m); load(date, m); }} />
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
           <button onClick={runAnalysis} disabled={running} className="btn-primary flex items-center gap-2">
             {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            Run EOD
+            Run {mode}
           </button>
         </div>
       </div>
@@ -93,7 +99,11 @@ export default function Candidates() {
         <div className="text-center py-8 text-gray-500">Loading...</div>
       ) : items.length === 0 ? (
         <div className="card text-center text-gray-500 py-8">
-          No candidates. {data?.candidates ? "Run EOD analysis first." : "Upload files and run analysis."}
+          {data?.runStatus == null
+            ? `Run ${mode} analysis first.`
+            : data?.runStatus === "FAILED"
+            ? `${mode} analysis failed.`
+            : `${mode} analysis completed \u2014 no qualifying candidates found.`}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -103,13 +113,12 @@ export default function Candidates() {
                 <TH label="#" k="rank" />
                 <TH label="Symbol" k="symbol" />
                 <TH label="Score" k="score" />
-                <TH label="Class" k="classification" />
                 <TH label="Status" k="status" />
+                <TH label="Trend" k="trend" />
                 <TH label="LTP" k="ltp" />
+                <TH label="Breakout" k="breakoutLevel" />
+                <TH label="R:R" k="riskReward1" />
                 <TH label="Chg%" k="changePercent" />
-                <TH label="Vol Ratio" k="volumeRatio" />
-                <TH label="Turnover" k="turnover" />
-                <TH label="Signals" k="score" />
               </tr>
             </thead>
             <tbody>
@@ -117,19 +126,29 @@ export default function Candidates() {
                 <tr key={c.symbol} className="table-row">
                   <td className="py-2.5 pr-3 text-gray-500">{c.rank}</td>
                   <td className="py-2.5 pr-3">
-                    <Link to={`/candidates/${c.symbol}`} className="font-semibold text-gray-100 hover:text-emerald-400 transition-colors">
+                    <Link to={`/candidates/${c.symbol}?date=${date}&mode=${mode}`} className="font-semibold text-gray-100 hover:text-emerald-400 transition-colors">
                       {c.symbol}
                     </Link>
                     <span className="text-gray-500 text-xs ml-2">{c.company}</span>
                   </td>
-                  <td className="py-2.5 pr-3"><ScoreBadge score={c.score} classification={c.classification} /></td>
-                  <td className="py-2.5 pr-3 text-xs text-gray-400">{c.classification?.replace("_", "+")}</td>
+                  <td className="py-2.5 pr-3">
+                    <ScoreBadge score={c.score} classification={c.classification} />
+                    {c.explainableScore != null && (
+                      <span className="block text-[9px] text-gray-500 mt-0.5">exp. {Number(c.explainableScore).toFixed(1)}</span>
+                    )}
+                  </td>
                   <td className="py-2.5 pr-3"><StatusBadge status={c.status} /></td>
+                  <td className={`py-2.5 pr-3 text-xs font-bold uppercase ${c.trend === "BULLISH" ? "text-emerald-400" : c.trend === "BEARISH" ? "text-red-400" : "text-gray-400"}`}>
+                    {c.trend ?? "—"}
+                  </td>
                   <td className="py-2.5 pr-3 text-right font-mono">{fmtCurrency(c.ltp)}</td>
+                  <td className="py-2.5 pr-3 text-xs text-gray-400">
+                    {c.breakoutLevel ? fmtCurrency(c.breakoutLevel) : "—"}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right font-mono text-xs">
+                    {c.riskReward1 != null ? (c.riskReward1 >= 2 ? <span className="text-emerald-400">1:{Number(c.riskReward1).toFixed(1)}</span> : <span className="text-amber-400">1:{Number(c.riskReward1).toFixed(1)}</span>) : "—"}
+                  </td>
                   <td className={`py-2.5 pr-3 text-right font-mono ${(c.changePercent ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>{fmtPct(c.changePercent)}</td>
-                  <td className="py-2.5 pr-3 text-right font-mono">{c.volumeRatio ? Number(c.volumeRatio).toFixed(1) + "x" : "—"}</td>
-                  <td className="py-2.5 pr-3 text-right font-mono">{fmtCurrency(c.turnover)}</td>
-                  <td className="py-2.5 text-right text-xs text-gray-400">{(c.signals ?? []).filter((s: any) => s.points > 0).length}</td>
                 </tr>
               ))}
             </tbody>

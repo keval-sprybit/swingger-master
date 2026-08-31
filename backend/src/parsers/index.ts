@@ -12,6 +12,7 @@ import {
   normalizeWeek52High,
   normalizeWeek52Low,
   normalizeLargeDeal,
+  normalizeBhavcopy,
 } from "./normalize.js";
 
 export interface ParseOutcome {
@@ -90,6 +91,9 @@ export function detectAndParse(buffer: Buffer, originalFilename: string): ParseO
           break;
         case "LARGE_DEALS":
           nr = normalizeLargeDeal(row, colMap, filenameDate);
+          break;
+        case "BHAVCOPY":
+          nr = normalizeBhavcopy(row, colMap);
           break;
         default:
           nr = { symbol: "", raw: row };

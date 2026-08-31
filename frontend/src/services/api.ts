@@ -9,22 +9,26 @@ async function json<T = any>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export type Mode = "INTRADAY" | "SWING";
+
 export const api = {
-  dashboard: (date?: string, snapshot?: number) =>
-    json(`/dashboard?${date ? `date=${date}` : ""}${snapshot ? `${date ? "&" : ""}snapshot=${snapshot}` : ""}`),
-  candidates: (date?: string, limit = 100) =>
-    json(`/candidates?${date ? `date=${date}&` : ""}limit=${limit}`),
-  candidateDetail: (symbol: string, date?: string) =>
-    json(`/candidates/${encodeURIComponent(symbol)}?${date ? `date=${date}` : ""}`),
-  watchlist: (date?: string) => json(`/watchlist?${date ? `date=${date}` : ""}`),
+  dashboard: (date?: string, snapshot?: number, mode?: Mode) =>
+    json(`/dashboard?${date ? `date=${date}` : ""}${snapshot ? `${date ? "&" : ""}snapshot=${snapshot}` : ""}${mode ? `${date || snapshot ? "&" : ""}mode=${mode}` : ""}`),
+  candidates: (date?: string, limit = 100, mode?: Mode) =>
+    json(`/candidates?${date ? `date=${date}&` : ""}limit=${limit}${mode ? `&mode=${mode}` : ""}`),
+  candidateDetail: (symbol: string, date?: string, mode?: Mode) =>
+    json(`/candidates/${encodeURIComponent(symbol)}?${date ? `date=${date}` : ""}${mode ? `${date ? "&" : ""}mode=${mode}` : ""}`),
+  stockChart: (symbol: string, mode?: Mode, range?: string) =>
+    json(`/candidates/${encodeURIComponent(symbol)}/chart?${mode ? `mode=${mode}` : ""}${range ? `${mode ? "&" : ""}range=${range}` : ""}`),
+  watchlist: (date?: string, mode?: Mode) => json(`/watchlist?${date ? `date=${date}` : ""}${mode ? `${date ? "&" : ""}mode=${mode}` : ""}`),
   history: () => json(`/history`),
   stockHistory: (symbol: string) =>
     json(`/stocks/${encodeURIComponent(symbol)}/history`),
-  runAnalysis: (tradingDate: string, analysisType = "EOD") =>
+  runAnalysis: (tradingDate: string, analysisType = "EOD", mode?: Mode) =>
     json("/analysis/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tradingDate, analysisType }),
+      body: JSON.stringify({ tradingDate, analysisType, mode }),
     }),
   settings: () => json("/settings"),
   updateSettings: (data: Record<string, number>) =>
